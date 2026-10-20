@@ -36,6 +36,11 @@ class TestEspToolDiagnostics(unittest.TestCase):
         self.assertEqual(result.mac_address, "de:ad:be:ef:1d:ea")
         self.assertIs(result.status, DiagnosticStatus.SUCCESS)
         self.assertIsNone(result.error)
+        self.assertEqual(
+            result.raw_output,
+            "Chip type: ESP32-D0WD (revision 1)\r\n"
+            "MAC: DE:AD:BE:EF:1D:EA\r\n",
+        )
         popen.assert_called_once_with(
             [
                 sys.executable,
@@ -65,19 +70,108 @@ class TestEspToolDiagnostics(unittest.TestCase):
         self.assertEqual(result.error.code, "incomplete_result")
 
     @patch("wep.esptool_diagnostics.subprocess.Popen")
-    def test_connection_failure_includes_manual_bootloader_instruction(self, popen):
+    def test_invalid_head_of_packet_is_classified_with_full_output(self, popen):
         popen.return_value = self.make_process(
-            b"Could not connect to ESP32: No serial data received.\r\n",
+            b"Invalid head of packet (0x1B): "
+            b"Possible serial noise or corruption\r\n",
             returncode=2,
         )
 
         result = diagnose_esp32("COM12")
 
         self.assertIs(result.status, DiagnosticStatus.FAILED)
-        self.assertEqual(result.error.code, "diagnostic_failed")
+        self.assertEqual(result.error.code, "sync_error")
         self.assertIn("BOOT", result.error.user_instruction)
+        self.assertIn("синхронизироваться", result.error.message)
+        self.assertIn("Возможны помехи", result.error.message)
+        self.assertIn("точная причина не установлена", result.error.message)
+        self.assertEqual(
+            result.raw_output,
+            "Invalid head of packet (0x1B): "
+            "Possible serial noise or corruption\r\n",
+        )
+
+    @patch("wep.esptool_diagnostics.subprocess.Popen")
+    def test_no_serial_data_received_has_connection_and_bootloader_guidance(
+        self, popen
+    ):
+        raw_output = (
+            "Failed to connect to Espressif device: No serial data received.\r\n"
+        )
+        popen.return_value = self.make_process(raw_output, returncode=2)
+
+        result = diagnose_esp32("COM10")
+
+        self.assertIs(result.status, DiagnosticStatus.FAILED)
+        self.assertEqual(result.error.code, "no_serial_data")
+        self.assertIn("подключение", result.error.user_instruction)
         self.assertIn("COM-порт", result.error.user_instruction)
-        self.assertIn("точную причину", result.error.message)
+        self.assertIn("BOOT/RESET", result.error.user_instruction)
+        self.assertEqual(result.raw_output, raw_output)
+
+    @patch("wep.esptool_diagnostics.subprocess.Popen")
+    def test_busy_or_missing_port_has_actionable_error(self, popen):
+        raw_output = (
+            "Could not open COM8, the port is busy or doesn't exist.\r\n"
+        )
+        popen.return_value = self.make_process(
+            raw_output.encode("utf-8"),
+            returncode=2,
+        )
+
+        result = diagnose_esp32("COM8")
+
+        self.assertEqual(result.error.code, "port_unavailable")
+        self.assertIn("Не удалось открыть", result.error.message)
+        self.assertIn("закройте другие программы", result.error.user_instruction)
+        self.assertEqual(result.raw_output, raw_output)
+
+    @patch("wep.esptool_diagnostics.subprocess.Popen")
+    def test_port_does_not_exist_is_classified(self, popen):
+        raw_output = "The port COM42 does not exist.\r\n"
+        popen.return_value = self.make_process(
+            raw_output.encode("utf-8"),
+            returncode=2,
+        )
+
+        result = diagnose_esp32("COM42")
+
+        self.assertEqual(result.error.code, "port_unavailable")
+        self.assertEqual(result.raw_output, raw_output)
+
+    @patch("wep.esptool_diagnostics.subprocess.Popen")
+    def test_esptool_reported_timeout_is_classified(self, popen):
+        raw_output = "Timed out waiting for packet header\r\n"
+        popen.return_value = self.make_process(
+            raw_output.encode("utf-8"),
+            returncode=2,
+        )
+
+        result = diagnose_esp32("COM11")
+
+        self.assertEqual(result.error.code, "timeout")
+        self.assertIn("время ожидания", result.error.message)
+        self.assertEqual(result.raw_output, raw_output)
+
+    @patch("wep.esptool_diagnostics.subprocess.Popen")
+    def test_unknown_esptool_error_preserves_output_without_exposing_it_in_message(
+        self, popen
+    ):
+        raw_output = (
+            "Unexpected vendor response for device path "
+            "C:\\Users\\Example\\private-device\r\n"
+        )
+        popen.return_value = self.make_process(
+            raw_output.encode("utf-8"),
+            returncode=2,
+        )
+
+        result = diagnose_esp32("COM12")
+
+        self.assertEqual(result.error.code, "esptool_error")
+        self.assertEqual(result.raw_output, raw_output)
+        self.assertNotIn("private-device", result.error.message)
+        self.assertIn("Исходный вывод", result.error.message)
 
     @patch("wep.esptool_diagnostics.subprocess.Popen")
     def test_timeout_kills_process_and_returns_structured_error(self, popen):
@@ -100,6 +194,7 @@ class TestEspToolDiagnostics(unittest.TestCase):
         self.assertIs(result.status, DiagnosticStatus.PARTIAL)
         self.assertEqual(result.error.code, "timeout")
         self.assertEqual(result.chip_type, "ESP32")
+        self.assertEqual(result.raw_output, "Chip type: ESP32\r\n")
 
     @patch(
         "wep.esptool_diagnostics.subprocess.Popen",
@@ -174,6 +269,7 @@ class TestEspToolDiagnostics(unittest.TestCase):
         self.assertEqual(result.chip_type, "ESP32")
         self.assertEqual(result.error.code, "process_termination_timeout")
         self.assertIn("может оставаться активным", result.error.message)
+        self.assertEqual(result.raw_output, "Chip type: ESP32\r\n")
 
     @patch("wep.esptool_diagnostics.subprocess.Popen")
     def test_second_timeout_preserves_output_split_between_attempts(self, popen):
@@ -198,6 +294,10 @@ class TestEspToolDiagnostics(unittest.TestCase):
         self.assertEqual(result.mac_address, "01:23:45:67:89:ab")
         self.assertIs(result.status, DiagnosticStatus.PARTIAL)
         self.assertEqual(result.error.code, "process_termination_timeout")
+        self.assertEqual(
+            result.raw_output,
+            "Chip type: ESP32-S3\r\nMAC: 01:23:45:67:89:ab\r\n",
+        )
 
     @patch("wep.esptool_diagnostics.subprocess.Popen")
     def test_second_timeout_does_not_duplicate_cumulative_output(self, popen):
@@ -281,8 +381,8 @@ class TestEspToolDiagnostics(unittest.TestCase):
         self.assertIs(result.status, DiagnosticStatus.PARTIAL)
         self.assertEqual(result.chip_type, "ESP32-S3")
         self.assertIsNone(result.mac_address)
-        self.assertEqual(result.error.code, "diagnostic_failed")
-        self.assertIn("точную причину", result.error.message)
+        self.assertEqual(result.error.code, "esptool_error")
+        self.assertEqual(result.raw_output, "Chip type: ESP32-S3\r\n")
 
 
 if __name__ == "__main__":
