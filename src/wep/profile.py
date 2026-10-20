@@ -3,8 +3,9 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from uuid import UUID, uuid4
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class ConfidenceStatus(str, Enum):
@@ -60,6 +61,7 @@ class InspectionProfile:
     discovered_components: list[DiscoveredItem] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    profile_id: str = field(default_factory=lambda: str(uuid4()))
 
     def __post_init__(self) -> None:
         if (
@@ -68,6 +70,12 @@ class InspectionProfile:
             or self.schema_version <= 0
         ):
             raise ValueError("schema_version must be a positive integer")
+        if not isinstance(self.profile_id, str):
+            raise ValueError("profile_id must be a valid UUID string")
+        try:
+            UUID(self.profile_id)
+        except ValueError as error:
+            raise ValueError("profile_id must be a valid UUID string") from error
         if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
             raise ValueError("created_at must be timezone-aware")
         self.created_at = self.created_at.astimezone(timezone.utc)
@@ -76,6 +84,7 @@ class InspectionProfile:
         """Return a JSON-compatible representation of the profile."""
         return {
             "schema_version": self.schema_version,
+            "profile_id": self.profile_id,
             "created_at": self.created_at.isoformat(),
             "device_info": {
                 key: observation.to_dict()

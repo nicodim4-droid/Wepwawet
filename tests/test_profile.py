@@ -3,6 +3,7 @@ import sys
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import UUID
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
@@ -21,9 +22,23 @@ class TestInspectionProfile(unittest.TestCase):
         profile = InspectionProfile()
 
         self.assertEqual(profile.schema_version, SCHEMA_VERSION)
-        self.assertEqual(profile.schema_version, 1)
+        self.assertEqual(profile.schema_version, 2)
         self.assertIsNotNone(profile.created_at.tzinfo)
         self.assertEqual(profile.created_at.utcoffset().total_seconds(), 0)
+
+    def test_profile_id_is_generated_as_a_stable_uuid(self):
+        profile = InspectionProfile()
+        original_id = profile.profile_id
+
+        self.assertIsInstance(original_id, str)
+        self.assertEqual(str(UUID(original_id)), original_id)
+        self.assertEqual(profile.profile_id, original_id)
+        self.assertEqual(profile.to_dict()["profile_id"], original_id)
+        self.assertNotEqual(profile.profile_id, InspectionProfile().profile_id)
+
+    def test_invalid_profile_id_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "valid UUID"):
+            InspectionProfile(profile_id="not-a-uuid")
 
     def test_schema_version_must_be_a_positive_integer(self):
         for schema_version in (0, -1, True, 1.5, "1"):
