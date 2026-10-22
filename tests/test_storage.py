@@ -2,7 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -22,7 +22,7 @@ from wep.storage import load_profile, save_profile
 class TestProfileStorage(unittest.TestCase):
     def create_profile(self):
         return InspectionProfile(
-            created_at=datetime(2026, 2, 3, 4, 5, 6, tzinfo=timezone.utc),
+            created_at=datetime(2026, 2, 3, 4, 5, 6, tzinfo=UTC),
             device_info={
                 "chip_model": ObservedValue(
                     "ESP32", "firmware", ConfidenceStatus.CONFIRMED
@@ -212,7 +212,7 @@ class TestProfileStorage(unittest.TestCase):
 
         self.assertEqual(
             loaded.created_at,
-            datetime(2026, 2, 3, 4, 5, 6, tzinfo=timezone.utc),
+            datetime(2026, 2, 3, 4, 5, 6, tzinfo=UTC),
         )
 
     def test_save_does_not_create_missing_parent_directory(self):

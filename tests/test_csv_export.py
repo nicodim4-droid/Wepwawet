@@ -116,6 +116,69 @@ class TestProfileCsvExport(unittest.TestCase):
         )
         self.assertEqual(chip_row["value_json"], '"УПЕ"')
 
+    def test_diagnostic_profile_exports_serial_and_chip_fields(self):
+        profile = InspectionProfile(
+            device_info={
+                "serial_port": ObservedValue(
+                    "COM4", "serial_port", ConfidenceStatus.CONFIRMED
+                ),
+                "diagnostic_status": ObservedValue(
+                    "success", "esptool", ConfidenceStatus.CONFIRMED
+                ),
+                "chip_model": ObservedValue(
+                    "ESP32-D0WD-V3 (revision v3.1)",
+                    "esptool",
+                    ConfidenceStatus.CONFIRMED,
+                ),
+                "mac_address": ObservedValue(
+                    "70:4b:ca:83:5a", "esptool", ConfidenceStatus.CONFIRMED
+                ),
+                "diagnostic_raw_output": ObservedValue(
+                    "Chip, type: ESP32-D0WD-V3\nMAC: 70:4b:ca:83:5a",
+                    "esptool",
+                    ConfidenceStatus.CONFIRMED,
+                ),
+            },
+            discovered_devices=[
+                DiscoveredItem(
+                    name=ObservedValue(
+                        "Sensor, revision A\nsecondary line",
+                        "test",
+                        ConfidenceStatus.CONFIRMED,
+                    )
+                )
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            export_profile_csv(profile, directory)
+            profile_bytes = (directory / "profiles.csv").read_bytes()
+            profile_rows = self.read_csv(directory / "profiles.csv")
+            device_rows = self.read_csv(directory / "devices.csv")
+            observations = self.read_csv(directory / "observations.csv")
+
+        self.assertTrue(profile_bytes.startswith(b"\xef\xbb\xbf"))
+        self.assertEqual(len(profile_rows), 1)
+        self.assertEqual(profile_rows[0]["serial_port"], "COM4")
+        self.assertEqual(profile_rows[0]["diagnostic_status"], "success")
+        self.assertEqual(
+            profile_rows[0]["chip_model"], "ESP32-D0WD-V3 (revision v3.1)"
+        )
+        self.assertEqual(profile_rows[0]["mac_address"], "70:4b:ca:83:5a")
+        self.assertEqual(
+            device_rows[0]["name_value"], "Sensor, revision A\nsecondary line"
+        )
+        raw_output_row = next(
+            row
+            for row in observations
+            if row["attribute"] == "diagnostic_raw_output"
+        )
+        self.assertEqual(
+            raw_output_row["value_json"],
+            '"Chip, type: ESP32-D0WD-V3\\nMAC: 70:4b:ca:83:5a"',
+        )
+
     def test_devices_and_components_have_stable_local_ids(self):
         profile = InspectionProfile(
             discovered_devices=[

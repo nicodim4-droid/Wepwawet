@@ -1,7 +1,7 @@
 """Data model for an ESP32 inspection profile."""
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
@@ -55,7 +55,7 @@ class InspectionProfile:
     """Collected information and diagnostic results for one inspection."""
 
     schema_version: int = SCHEMA_VERSION
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     device_info: dict[str, ObservedValue] = field(default_factory=dict)
     discovered_devices: list[DiscoveredItem] = field(default_factory=list)
     discovered_components: list[DiscoveredItem] = field(default_factory=list)
@@ -78,7 +78,7 @@ class InspectionProfile:
             raise ValueError("profile_id must be a valid UUID string") from error
         if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
             raise ValueError("created_at must be timezone-aware")
-        self.created_at = self.created_at.astimezone(timezone.utc)
+        self.created_at = self.created_at.astimezone(UTC)
 
     def to_dict(self) -> dict[str, object]:
         """Return a JSON-compatible representation of the profile."""

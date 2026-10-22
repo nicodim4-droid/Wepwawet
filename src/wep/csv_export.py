@@ -15,6 +15,8 @@ PROFILE_COLUMNS = (
     "rongo_name",
     "rongo_article",
     "node_id",
+    "serial_port",
+    "diagnostic_status",
 )
 DEVICE_COLUMNS = (
     "profile_id",
@@ -40,6 +42,8 @@ PROFILE_DEVICE_FIELDS = (
     "rongo_name",
     "rongo_article",
     "node_id",
+    "serial_port",
+    "diagnostic_status",
 )
 
 
@@ -152,7 +156,7 @@ def _observation_row(
     }
 
 
-def _value_type(value: str | int | float | bool | None) -> str:
+def _value_type(value: str | float | bool | None) -> str:
     if value is None:
         return "null"
     if isinstance(value, bool):
@@ -166,7 +170,7 @@ def _value_type(value: str | int | float | bool | None) -> str:
     raise TypeError(f"Unsupported observation value type: {type(value).__name__}")
 
 
-def _display_value(value: str | int | float | bool | None) -> str:
+def _display_value(value: str | float | bool | None) -> str:
     return "" if value is None else str(value)
 
 

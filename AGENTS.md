@@ -22,7 +22,7 @@ The project is also a practical environment for learning Python development and 
 
 Keep setup instructions and development workflows compatible with both Windows versions. Do not rely on Windows 11-only features unless explicitly approved.
 
-The application architecture, GUI framework, diagnostic protocol, and dependencies have not yet been selected. Do not treat undecided technologies as approved decisions.
+The GUI is implemented with the Python standard library's Tkinter and ttk. The diagnostic protocol is implemented by `esptool_diagnostics.py`; avoid duplicating its behavior in the GUI.
 
 ## 3. Working rules
 
@@ -111,9 +111,9 @@ The repository has been initialized.
 The `.gitignore` file has been committed.
 A local `.venv` exists and is excluded from Git.
 
-The application implementation has not started.
+The initial Tkinter GUI is launched from a source checkout with `python run_wep.py`. Continue to keep the GUI separate from the diagnostic, profile, storage, and export modules.
 
-The next objective is to establish a reproducible project structure and development environment before implementing ESP32 communication.
+The application uses the existing serial-port discovery, esptool diagnostic, profile, storage, and CSV export modules. No GUI framework dependency is required.
 
 ## 11. Language
 

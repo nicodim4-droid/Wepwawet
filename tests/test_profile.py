@@ -1,7 +1,7 @@
 import json
 import sys
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -57,13 +57,13 @@ class TestInspectionProfile(unittest.TestCase):
 
         self.assertEqual(
             profile.created_at,
-            datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+            datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
         )
-        self.assertIs(profile.created_at.tzinfo, timezone.utc)
+        self.assertIs(profile.created_at.tzinfo, UTC)
 
     def test_profile_can_be_converted_to_json_compatible_dict(self):
         profile = InspectionProfile(
-            created_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+            created_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
             device_info={
                 "chip_model": ObservedValue(
                     "ESP32", "firmware", ConfidenceStatus.CONFIRMED
