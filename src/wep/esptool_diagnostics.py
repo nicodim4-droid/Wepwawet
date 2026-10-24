@@ -169,6 +169,8 @@ def _diagnose_with_api(
 def _run_esptool_api(
     connection: Connection, port: str, manual_bootloader: bool
 ) -> None:
+    # redirect_stdout changes process-global streams, so capture only in this
+    # spawned child instead of sharing the GUI process's output streams.
     output = io.StringIO()
     returncode = 0
     try:
@@ -274,8 +276,7 @@ def diagnose_esp32(
             ),
         )
 
-    # In PyInstaller one-file builds sys.executable points to the EXE itself,
-    # which causes recursive execution. Detect this and use the Python API.
+    # In frozen builds sys.executable points to the WEP EXE, not Python.
     if hasattr(sys, "_MEIPASS"):
         return _diagnose_with_api(port, manual_bootloader=manual_bootloader)
 

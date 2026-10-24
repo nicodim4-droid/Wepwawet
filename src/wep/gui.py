@@ -5,6 +5,7 @@ import queue
 import subprocess
 import threading
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -37,6 +38,7 @@ from wep.storage import save_profile
 from wep.version import VERSION
 
 NO_SIGNAL_ERROR_CODES = frozenset({"no_serial_data", "sync_error", "timeout"})
+
 
 def _localize_profile_message(message: str, language: str) -> str:
     return translate_known_message(message, language)
@@ -133,16 +135,17 @@ def format_diagnostic_profile(
 
 THEMES = {
     "dark": {
-        "background": "#090d0a",
-        "panel": "#111a13",
-        "field": "#080b09",
-        "foreground": "#a8d5a2",
-        "muted": "#729071",
-        "accent": "#54c96b",
-        "border": "#355a3b",
-        "selection": "#245b30",
-        "button": "#19291c",
-        "error": "#f08080",
+        "background": "#080c09",
+        "panel": "#0e1510",
+        "field": "#070b08",
+        "foreground": "#b9d7b5",
+        "muted": "#718276",
+        "accent": "#78d783",
+        "border": "#294232",
+        "selection": "#214b2d",
+        "button": "#142019",
+        "warning": "#efb64e",
+        "error": "#f07070",
     },
     "light": {
         "background": "#edf1f4",
@@ -154,6 +157,7 @@ THEMES = {
         "border": "#bdcbd3",
         "selection": "#cce4d7",
         "button": "#e1e9ed",
+        "warning": "#936000",
         "error": "#b42318",
     },
 }
@@ -163,8 +167,8 @@ class WepApplication:
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.minsize(760, 560)
-        self.root.geometry("940x700")
+        self.root.minsize(820, 640)
+        self.root.geometry("1000x760")
 
         self.language = load_language()
         self.theme = load_theme()
@@ -190,6 +194,15 @@ class WepApplication:
         self._status_state = "ready"
         self._stage_key = "diagnostic_not_started"
         self._stage_values: dict[str, object] = {}
+        self._system_log_entries: list[
+            tuple[str, str, str, dict[str, object]]
+        ] = []
+
+        assets = Path(__file__).resolve().parent / "assets"
+        self.logo_image = tk.PhotoImage(
+            master=self.root, file=str(assets / "wep_symbol.png")
+        ).subsample(2, 2)
+        self.root.iconbitmap(str(assets / "wep.ico"))
 
         self._build_interface()
         self._apply_theme()
@@ -203,94 +216,116 @@ class WepApplication:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
 
-        self.header = ttk.Frame(self.root, padding=(12, 10))
+        self.header = ttk.Frame(self.root, padding=(18, 14, 18, 12))
         self.header.grid(row=0, column=0, sticky="ew")
         self.header.columnconfigure(0, weight=1)
+        self.brand_frame = ttk.Frame(self.header)
+        self.brand_frame.grid(row=0, column=0, rowspan=2, sticky="w")
+        self.brand_frame.columnconfigure(1, weight=1)
+        self.logo_label = ttk.Label(self.brand_frame, image=self.logo_image)
+        self.logo_label.grid(row=0, column=0, rowspan=2, padx=(0, 10))
         self.title_label = ttk.Label(
-            self.header,
-            text="WEP",
-            font=("TkDefaultFont", 16, "bold"),
+            self.brand_frame,
+            style="Brand.TLabel",
         )
-        self.title_label.grid(row=0, column=0, sticky="w")
+        self.title_label.grid(row=0, column=1, sticky="w")
+        self.version_label = ttk.Label(self.brand_frame, style="Muted.TLabel")
+        self.version_label.grid(row=1, column=1, sticky="w")
         self.app_state_label = ttk.Label(self.header, style="State.TLabel")
-        self.app_state_label.grid(row=0, column=1, padx=(12, 16))
-        self.theme_label = ttk.Label(self.header)
-        self.theme_label.grid(row=0, column=2, padx=(0, 6))
+        self.app_state_label.grid(row=0, column=1, padx=(12, 16), sticky="e")
+        self.controls_frame = ttk.Frame(self.header)
+        self.controls_frame.grid(row=1, column=1, sticky="e")
+        self.theme_label = ttk.Label(self.controls_frame)
+        self.theme_label.grid(row=0, column=0, padx=(0, 5))
         self.theme_combo = ttk.Combobox(
-            self.header,
+            self.controls_frame,
             textvariable=self.theme_var,
             values=(),
             state="readonly",
-            width=27,
+            width=23,
         )
-        self.theme_combo.grid(row=0, column=3, sticky="e")
+        self.theme_combo.grid(row=0, column=1, sticky="e")
         self.theme_combo.bind("<<ComboboxSelected>>", self._on_theme_selected)
-        self.language_label = ttk.Label(self.header)
-        self.language_label.grid(row=0, column=4, padx=(12, 6))
+        self.language_label = ttk.Label(self.controls_frame)
+        self.language_label.grid(row=0, column=2, padx=(10, 5))
         self.language_combo = ttk.Combobox(
-            self.header,
+            self.controls_frame,
             textvariable=self.language_var,
             values=tuple(LANGUAGE_NAMES.values()),
             state="readonly",
-            width=10,
+            width=9,
         )
-        self.language_combo.grid(row=0, column=5, sticky="e")
+        self.language_combo.grid(row=0, column=3, sticky="e")
         self.language_combo.bind(
             "<<ComboboxSelected>>", self._on_language_selected
         )
         self.about_button = ttk.Button(
-            self.header,
+            self.controls_frame,
             command=self.show_about,
         )
-        self.about_button.grid(row=0, column=6, padx=(12, 0), sticky="e")
+        self.about_button.grid(row=0, column=4, padx=(10, 0), sticky="e")
 
-        self.content = ttk.Frame(self.root, padding=(12, 0, 12, 8))
+        self.content = ttk.Frame(self.root, padding=(18, 0, 18, 10))
         self.content.grid(row=1, column=0, sticky="nsew")
         self.content.columnconfigure(0, weight=1)
-        self.content.rowconfigure(2, weight=1)
+        self._set_content_weights(has_profile=False)
 
         self.port_frame = ttk.LabelFrame(
-            self.content, padding=(10, 6)
+            self.content, padding=(12, 10), style="Panel.TLabelframe"
         )
-        self.port_frame.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        self.port_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         self.port_frame.columnconfigure(0, weight=1)
         self.port_list = tk.Listbox(
-            self.port_frame, height=3, exportselection=False, activestyle="none"
+            self.port_frame,
+            height=3,
+            exportselection=False,
+            activestyle="none",
+            borderwidth=0,
+            highlightthickness=1,
+            relief="flat",
         )
-        self.port_list.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.port_list.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         self.port_scroll_x = ttk.Scrollbar(
             self.port_frame, orient="horizontal", command=self.port_list.xview
         )
         self.port_scroll_x.grid(row=1, column=0, sticky="ew", padx=(0, 8))
         self.port_list.configure(xscrollcommand=self.port_scroll_x.set)
         self.refresh_button = ttk.Button(
-            self.port_frame, command=self.refresh_ports
+            self.port_frame, command=self.refresh_ports, style="Quiet.TButton"
         )
-        self.refresh_button.grid(row=0, column=1, rowspan=2, sticky="n", pady=1)
+        self.refresh_button.grid(
+            row=0, column=1, rowspan=2, sticky="ns", pady=1
+        )
 
         self.diagnostic_frame = ttk.LabelFrame(
-            self.content, padding=(10, 8)
+            self.content, padding=(12, 10), style="Panel.TLabelframe"
         )
-        self.diagnostic_frame.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        self.diagnostic_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         self.diagnostic_frame.columnconfigure(1, weight=1)
         self.diagnose_button = ttk.Button(
             self.diagnostic_frame,
             command=self.start_diagnostic,
+            style="Primary.TButton",
         )
-        self.diagnose_button.grid(row=0, column=0, sticky="w", padx=(0, 10))
+        self.diagnose_button.grid(
+            row=0, column=0, sticky="w", padx=(0, 14), ipady=3
+        )
         self.stage_label = ttk.Label(
-            self.diagnostic_frame, textvariable=self.stage_var
+            self.diagnostic_frame,
+            textvariable=self.stage_var,
+            style="Status.TLabel",
         )
         self.stage_label.grid(row=0, column=1, sticky="w")
         self.progress = ttk.Progressbar(
-            self.diagnostic_frame, mode="indeterminate", length=110
+            self.diagnostic_frame, mode="indeterminate", length=120, maximum=100
         )
         self.progress.grid(row=0, column=2, sticky="e")
+        self.progress.grid_remove()
 
         self.results_frame = ttk.LabelFrame(
-            self.content, padding=(10, 7)
+            self.content, padding=(12, 10), style="Panel.TLabelframe"
         )
-        self.results_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
+        self.results_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 8))
         self.results_frame.columnconfigure(0, weight=1)
         self.results_frame.rowconfigure(0, weight=1)
         self.results_body = ttk.Frame(self.results_frame)
@@ -317,8 +352,10 @@ class WepApplication:
         self.results_scroll.grid_remove()
         self.results_placeholder = ttk.Label(
             self.results_body,
-            anchor="center",
-            justify="center",
+            anchor="nw",
+            justify="left",
+            style="Empty.TLabel",
+            padding=(14, 18),
         )
         self.results_placeholder.grid(
             row=0, column=0, columnspan=2, sticky="nsew"
@@ -389,37 +426,83 @@ class WepApplication:
         )
         self.raw_output_frame.grid_remove()
 
-        self.export_frame = ttk.LabelFrame(
-            self.content, padding=(10, 6)
+        self.system_log_frame = ttk.LabelFrame(
+            self.content, padding=(12, 8), style="Panel.TLabelframe"
         )
-        self.export_frame.grid(row=3, column=0, sticky="ew")
+        self.system_log_frame.grid(row=3, column=0, sticky="nsew", pady=(0, 8))
+        self.system_log_frame.columnconfigure(0, weight=1)
+        self.system_log_frame.rowconfigure(0, weight=1)
+        self.system_log_text = tk.Text(
+            self.system_log_frame,
+            wrap="word",
+            height=4,
+            exportselection=False,
+            font=("TkFixedFont", 9),
+            borderwidth=0,
+            padx=8,
+            pady=6,
+            highlightthickness=1,
+        )
+        self.system_log_text.grid(row=0, column=0, sticky="nsew")
+        self.system_log_scroll = ttk.Scrollbar(
+            self.system_log_frame,
+            command=self.system_log_text.yview,
+        )
+        self.system_log_scroll.grid(row=0, column=1, sticky="ns")
+        self.system_log_text.configure(yscrollcommand=self.system_log_scroll.set)
+        self.system_log_text.bind("<Control-c>", self._copy_keyboard_selection)
+        self.system_log_text.bind("<Control-C>", self._copy_keyboard_selection)
+        self.system_log_text.bind("<KeyPress>", self._protect_read_only_text)
+        self.system_log_text.bind("<<Paste>>", lambda _event: "break")
+        self.system_log_text.bind("<<PasteSelection>>", lambda _event: "break")
+        self.system_log_text.bind("<<Cut>>", lambda _event: "break")
+        self.system_log_text.bind(
+            "<Button-3>", self._show_read_only_text_menu
+        )
+
+        self.export_frame = ttk.LabelFrame(
+            self.content, padding=(12, 8), style="Panel.TLabelframe"
+        )
+        self.export_frame.grid(row=4, column=0, sticky="ew")
         self.export_frame.columnconfigure(0, weight=1)
         self.json_button = ttk.Button(
             self.export_frame,
             command=self.export_json,
             state="disabled",
+            style="Quiet.TButton",
         )
         self.json_button.grid(row=0, column=0, sticky="w", padx=(0, 8))
         self.csv_button = ttk.Button(
             self.export_frame,
             command=self.export_csv,
             state="disabled",
+            style="Quiet.TButton",
         )
         self.csv_button.grid(row=0, column=1, sticky="w")
         self.platformio_button = ttk.Button(
             self.export_frame,
             command=self.export_platformio_ini,
+            style="Quiet.TButton",
         )
         self.platformio_button.grid(row=0, column=2, sticky="w", padx=(8, 0))
 
         self.status_bar = ttk.Label(
-            self.root, textvariable=self.status_var, anchor="w", padding=(12, 6)
+            self.root,
+            textvariable=self.status_var,
+            anchor="w",
+            padding=(18, 7),
+            style="Footer.TLabel",
         )
         self.status_bar.grid(row=2, column=0, sticky="ew")
 
+    def _set_content_weights(self, *, has_profile: bool) -> None:
+        """Allocate the flexible content area according to available results."""
+        self.content.rowconfigure(2, weight=3 if has_profile else 1)
+        self.content.rowconfigure(3, weight=1)
+
     def _apply_theme(self) -> None:
         colors = THEMES[self.theme]
-        font = ("TkFixedFont", 10) if self.theme == "dark" else ("TkDefaultFont", 10)
+        font = ("TkFixedFont", 10)
         label_font = (font[0], font[1], "bold")
         self.root.configure(background=colors["background"])
         self.root.option_add("*TCombobox*Listbox.background", colors["field"])
@@ -441,21 +524,81 @@ class WepApplication:
             troughcolor=colors["panel"],
             font=font,
         )
-        self.title_label.configure(font=(font[0], 16, "bold"))
+        self.title_label.configure(font=(font[0], 14, "bold"))
+        self.version_label.configure(font=(font[0], 9))
         style.configure("TFrame", background=colors["background"])
         style.configure(
             "TLabelframe",
             background=colors["background"],
             bordercolor=colors["border"],
+            relief="flat",
+            borderwidth=1,
         )
         style.configure(
             "TLabelframe.Label",
             background=colors["background"],
             foreground=colors["accent"],
             font=label_font,
+            padding=(3, 0, 5, 0),
+        )
+        style.configure(
+            "Panel.TLabelframe",
+            background=colors["panel"],
+            bordercolor=colors["border"],
+            relief="flat",
+            borderwidth=1,
+        )
+        style.configure(
+            "Panel.TLabelframe.Label",
+            background=colors["background"],
+            foreground=colors["muted"],
+            font=label_font,
+            padding=(3, 0, 5, 0),
         )
         style.configure(
             "TLabel", background=colors["background"], foreground=colors["foreground"]
+        )
+        style.configure(
+            "Brand.TLabel",
+            background=colors["background"],
+            foreground=colors["accent"],
+            font=(font[0], 15, "bold"),
+        )
+        style.configure(
+            "Status.TLabel",
+            background=colors["panel"],
+            foreground=colors["foreground"],
+            font=(font[0], 10),
+        )
+        style.configure(
+            "Running.Status.TLabel",
+            background=colors["panel"],
+            foreground=colors["accent"],
+            font=(font[0], 10, "bold"),
+        )
+        style.configure(
+            "Warning.Status.TLabel",
+            background=colors["panel"],
+            foreground=colors["warning"],
+            font=(font[0], 10, "bold"),
+        )
+        style.configure(
+            "Error.Status.TLabel",
+            background=colors["panel"],
+            foreground=colors["error"],
+            font=(font[0], 10, "bold"),
+        )
+        style.configure(
+            "Empty.TLabel",
+            background=colors["field"],
+            foreground=colors["muted"],
+            font=(font[0], 10),
+        )
+        style.configure(
+            "Footer.TLabel",
+            background=colors["panel"],
+            foreground=colors["muted"],
+            font=(font[0], 9),
         )
         style.configure(
             "State.TLabel",
@@ -470,16 +613,73 @@ class WepApplication:
             font=(font[0], 9, "bold"),
         )
         style.configure(
+            "Warning.State.TLabel",
+            background=colors["background"],
+            foreground=colors["warning"],
+            font=(font[0], 9, "bold"),
+        )
+        style.configure(
+            "Muted.TLabel",
+            background=colors["background"],
+            foreground=colors["muted"],
+            font=(font[0], 9),
+        )
+        style.configure(
             "TButton",
             background=colors["button"],
             foreground=colors["foreground"],
             bordercolor=colors["border"],
-            padding=(9, 5),
+            relief="flat",
+            borderwidth=1,
+            padding=(12, 7),
             font=font,
         )
         style.map(
             "TButton",
-            background=[("active", colors["selection"]), ("disabled", colors["panel"])],
+            background=[
+                ("pressed", colors["selection"]),
+                ("active", colors["selection"]),
+                ("disabled", colors["panel"]),
+            ],
+            foreground=[("disabled", colors["muted"])],
+            relief=[("pressed", "flat"), ("!pressed", "flat")],
+            bordercolor=[("focus", colors["accent"])],
+        )
+        style.configure(
+            "Primary.TButton",
+            background=colors["accent"],
+            foreground=colors["field"],
+            bordercolor=colors["accent"],
+            font=(font[0], 10, "bold"),
+            padding=(16, 9),
+        )
+        style.map(
+            "Primary.TButton",
+            background=[
+                ("pressed", colors["selection"]),
+                ("active", colors["selection"]),
+                ("disabled", colors["panel"]),
+            ],
+            foreground=[
+                ("disabled", colors["muted"]),
+                ("!disabled", colors["field"]),
+            ],
+            bordercolor=[("focus", colors["foreground"])],
+        )
+        style.configure(
+            "Quiet.TButton",
+            background=colors["panel"],
+            foreground=colors["foreground"],
+            bordercolor=colors["border"],
+            padding=(10, 6),
+        )
+        style.map(
+            "Quiet.TButton",
+            background=[
+                ("pressed", colors["selection"]),
+                ("active", colors["button"]),
+                ("disabled", colors["panel"]),
+            ],
             foreground=[("disabled", colors["muted"])],
         )
         style.configure(
@@ -489,6 +689,10 @@ class WepApplication:
             foreground=colors["foreground"],
             arrowcolor=colors["accent"],
             font=font,
+            padding=(7, 5),
+            arrowsize=12,
+            bordercolor=colors["border"],
+            relief="flat",
         )
         style.map(
             "TCombobox",
@@ -496,6 +700,7 @@ class WepApplication:
             foreground=[("readonly", colors["foreground"])],
             selectbackground=[("readonly", colors["selection"])],
             selectforeground=[("readonly", colors["foreground"])],
+            bordercolor=[("focus", colors["accent"])],
         )
         style.configure(
             "TProgressbar",
@@ -508,6 +713,9 @@ class WepApplication:
             background=colors["button"],
             troughcolor=colors["panel"],
             arrowcolor=colors["foreground"],
+            bordercolor=colors["panel"],
+            relief="flat",
+            arrowsize=10,
         )
         self.port_list.configure(
             background=colors["field"],
@@ -516,6 +724,8 @@ class WepApplication:
             selectforeground=colors["foreground"],
             highlightbackground=colors["border"],
             highlightcolor=colors["accent"],
+            font=("TkFixedFont", 10),
+            activestyle="none",
         )
         self.results_text.configure(
             background=colors["field"],
@@ -524,6 +734,7 @@ class WepApplication:
             selectbackground=colors["selection"],
             selectforeground=colors["foreground"],
             highlightbackground=colors["border"],
+            highlightthickness=1,
         )
         self.raw_output_text.configure(
             background=colors["field"],
@@ -532,9 +743,25 @@ class WepApplication:
             selectbackground=colors["selection"],
             selectforeground=colors["foreground"],
             highlightbackground=colors["border"],
+            highlightthickness=1,
         )
+        self.system_log_text.configure(
+            background=colors["field"],
+            foreground=colors["foreground"],
+            selectbackground=colors["selection"],
+            selectforeground=colors["foreground"],
+            highlightbackground=colors["border"],
+            highlightthickness=1,
+        )
+        self.system_log_text.tag_configure("success", foreground=colors["accent"])
+        self.system_log_text.tag_configure("warning", foreground=colors["warning"])
+        self.system_log_text.tag_configure("error", foreground=colors["error"])
+        self.system_log_text.tag_configure("info", foreground=colors["muted"])
+        self.system_log_text.tag_configure("timestamp", foreground=colors["muted"])
+        self.results_text.tag_configure("warning", foreground=colors["warning"])
+        self.results_text.tag_configure("error", foreground=colors["error"])
         self.status_bar.configure(
-            background=colors["panel"], foreground=colors["foreground"]
+            background=colors["panel"], foreground=colors["muted"]
         )
 
     def _theme_name(self, theme: str) -> str:
@@ -542,6 +769,10 @@ class WepApplication:
 
     def _apply_language(self) -> None:
         self.root.title(self._t("window_title"))
+        self.title_label.configure(text=self._t("app_brand_name"))
+        self.version_label.configure(
+            text=self._t("app_version", version=VERSION)
+        )
         self.language_var.set(LANGUAGE_NAMES[self.language])
         self.theme_label.configure(text=self._t("theme_label"))
         self.language_label.configure(text=self._t("language_label"))
@@ -549,21 +780,23 @@ class WepApplication:
             values=tuple(self._theme_name(name) for name in THEMES)
         )
         self.theme_var.set(self._theme_name(self.theme))
-        self.port_frame.configure(text=self._t("ports_section"))
+        self.port_frame.configure(text=self._t("target_section"))
         self.refresh_button.configure(text=self._t("refresh_ports"))
-        self.diagnostic_frame.configure(text=self._t("diagnostics_section"))
+        self.diagnostic_frame.configure(text=self._t("serial_link_section"))
         self.diagnose_button.configure(text=self._t("start_diagnostics"))
-        self.results_frame.configure(text=self._t("results_section"))
+        self.results_frame.configure(text=self._t("hardware_profile_section"))
         self.results_placeholder.configure(text=self._t("results_empty"))
+        self.system_log_frame.configure(text=self._t("system_log_section"))
         self.raw_output_toggle.configure(text=self._t("raw_output_toggle"))
         self.copy_result_button.configure(text=self._t("copy_result"))
         self.raw_output_menu.entryconfigure(0, label=self._t("context_copy"))
         self.raw_output_menu.entryconfigure(1, label=self._t("context_select_all"))
-        self.export_frame.configure(text=self._t("export_section"))
+        self.export_frame.configure(text=self._t("commands_section"))
         self.json_button.configure(text=self._t("save_json"))
         self.csv_button.configure(text=self._t("export_csv"))
         self.platformio_button.configure(text=self._t("create_platformio"))
         self.about_button.configure(text=self._t("about_button"))
+        self._render_system_log()
 
         selected_port = self.port_list.curselection()
         selected_index = selected_port[0] if selected_port else None
@@ -579,12 +812,24 @@ class WepApplication:
             "ready": "state_ready",
             "error": "state_error",
             "running": "state_running",
+            "warning": "state_warning",
         }[self._status_state]
         self.app_state_label.configure(
             text=self._t(state_key),
-            style="Error.State.TLabel"
-            if self._status_state == "error"
-            else "State.TLabel",
+            style={
+                "ready": "State.TLabel",
+                "error": "Error.State.TLabel",
+                "running": "State.TLabel",
+                "warning": "Warning.State.TLabel",
+            }[self._status_state],
+        )
+        self.stage_label.configure(
+            style={
+                "ready": "Status.TLabel",
+                "running": "Running.Status.TLabel",
+                "warning": "Warning.Status.TLabel",
+                "error": "Error.Status.TLabel",
+            }[self._status_state]
         )
 
     def _on_language_selected(self, _event: tk.Event | None = None) -> None:
@@ -597,6 +842,7 @@ class WepApplication:
         try:
             save_language(self.language)
         except OSError as error:
+            self._log_event("log_settings_error", state="error", error=error)
             messagebox.showerror(
                 self._t("settings_error_title"),
                 self._t("settings_language_error", error=error),
@@ -617,6 +863,7 @@ class WepApplication:
         try:
             save_theme(self.theme)
         except OSError as error:
+            self._log_event("log_settings_error", state="error", error=error)
             messagebox.showerror(
                 self._t("settings_error_title"),
                 self._t("settings_theme_error", error=error),
@@ -629,6 +876,7 @@ class WepApplication:
         )
 
     def show_about(self) -> tk.Toplevel:
+        """Create and display the modal About window."""
         window = tk.Toplevel(self.root)
         window.title(self._t("about_title"))
         window.transient(self.root)
@@ -638,7 +886,7 @@ class WepApplication:
         ttk.Label(
             window,
             text=self._t("about_product_name"),
-            font=("TkDefaultFont", 12, "bold"),
+            font=("TkFixedFont", 12, "bold"),
             padding=(18, 16, 18, 8),
         ).grid(row=0, column=0, sticky="w")
         ttk.Label(
@@ -664,12 +912,18 @@ class WepApplication:
         return window
 
     def refresh_ports(self) -> None:
+        """Refresh the OS-reported port list and update status and controls.
+
+        Port discovery does not open the ports or verify that a board responds.
+        Discovery errors are shown in the GUI.
+        """
         try:
             self.ports = list_serial_ports()
         except OSError as error:
             self.ports = []
             self._set_ports([])
             self._update_controls()
+            self._log_event("log_ports_error", state="error", error=error)
             self._set_status(
                 "status_ports_error",
                 state="running" if self._diagnostic_running else "error",
@@ -684,6 +938,7 @@ class WepApplication:
         self._set_ports(self.ports)
         count = len(self.ports)
         self._update_controls()
+        self._log_event("log_ports_found", count=count)
         self._set_status(
             "status_ports_found" if count else "status_ports_empty",
             state="running" if self._diagnostic_running else "ready",
@@ -715,6 +970,11 @@ class WepApplication:
             self.port_list.selection_set(0)
 
     def start_diagnostic(self) -> None:
+        """Start diagnostics for the selected port in a background thread.
+
+        The result is returned to the Tk event loop through the diagnostic
+        queue; this method does not perform serial I/O itself.
+        """
         if self._diagnostic_running:
             return
         selection = self.port_list.curselection()
@@ -728,9 +988,11 @@ class WepApplication:
 
         port_name = self.ports[selection[0]].name
         self._diagnostic_running = True
+        self._log_event("log_diagnostic_started", port=port_name)
         self.diagnose_button.configure(state="disabled")
         self._set_stage("diagnostic_running", port=port_name)
         self._set_status("status_running", state="running")
+        self.progress.grid()
         self.progress.start(12)
         worker = threading.Thread(
             target=self._diagnostic_worker,
@@ -744,6 +1006,10 @@ class WepApplication:
             self._diagnostic_running = False
             self.diagnose_button.configure(state="normal")
             self.progress.stop()
+            self.progress.grid_remove()
+            self._log_event(
+                "log_diagnostic_worker_error", state="error", error=error
+            )
             self._set_stage("diagnostic_failed")
             self._set_status("status_operation_error", state="error")
             messagebox.showerror(
@@ -765,6 +1031,7 @@ class WepApplication:
         ) as error:
             self._diagnostic_queue.put(error)
         else:
+            # Tk widgets are updated only by the event-loop queue poller.
             self._diagnostic_queue.put(result)
 
     def _poll_diagnostic_result(self) -> None:
@@ -776,10 +1043,14 @@ class WepApplication:
 
         self._diagnostic_running = False
         self.progress.stop()
+        self.progress.grid_remove()
         if isinstance(
             result,
             (OSError, ValueError, RuntimeError, subprocess.SubprocessError),
         ):
+            self._log_event(
+                "log_diagnostic_worker_error", state="error", error=result
+            )
             self._set_stage("diagnostic_failed")
             self._set_status("status_operation_error", state="error")
             self._update_controls()
@@ -795,12 +1066,21 @@ class WepApplication:
         self._update_controls()
         self._render_profile(result)
         if result.status is DiagnosticStatus.SUCCESS:
+            self._log_event(
+                "log_diagnostic_success", state="success", port=result.port
+            )
             self._set_stage("diagnostic_success")
             self._set_status("status_diagnostic_success")
         elif result.status is DiagnosticStatus.PARTIAL:
+            self._log_event(
+                "log_diagnostic_partial", state="warning", port=result.port
+            )
             self._set_stage("diagnostic_partial")
-            self._set_status("status_diagnostic_partial")
+            self._set_status("status_diagnostic_partial", state="warning")
         else:
+            self._log_event(
+                "log_diagnostic_failed", state="error", port=result.port
+            )
             self._set_stage("diagnostic_failed")
             self._set_status("status_operation_error", state="error")
 
@@ -815,11 +1095,41 @@ class WepApplication:
             "ready": "state_ready",
             "error": "state_error",
             "running": "state_running",
+            "warning": "state_warning",
         }[state]
         self.app_state_label.configure(
             text=self._t(state_key),
-            style="Error.State.TLabel" if state == "error" else "State.TLabel",
+            style={
+                "ready": "State.TLabel",
+                "error": "Error.State.TLabel",
+                "running": "State.TLabel",
+                "warning": "Warning.State.TLabel",
+            }[state],
         )
+        self.stage_label.configure(
+            style={
+                "ready": "Status.TLabel",
+                "running": "Running.Status.TLabel",
+                "warning": "Warning.Status.TLabel",
+                "error": "Error.Status.TLabel",
+            }[state]
+        )
+
+    def _log_event(
+        self, key: str, *, state: str = "info", **values: object
+    ) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self._system_log_entries.append((timestamp, key, state, values))
+        self._render_system_log()
+
+    def _render_system_log(self) -> None:
+        self.system_log_text.delete("1.0", tk.END)
+        for timestamp, key, state, values in self._system_log_entries:
+            self.system_log_text.insert(tk.END, f"[{timestamp}] ", "timestamp")
+            self.system_log_text.insert(
+                tk.END, f"{self._t(key, **values)}\n", state
+            )
+        self.system_log_text.see(tk.END)
 
     def _set_stage(self, key: str, **values: object) -> None:
         self._stage_key = key
@@ -910,6 +1220,7 @@ class WepApplication:
             )
 
     def copy_result(self) -> None:
+        """Copy the localized report for the current profile to the clipboard."""
         if self.profile is None:
             messagebox.showinfo(
                 self._t("copy_no_result_title"),
@@ -970,6 +1281,7 @@ class WepApplication:
 
     def _render_profile(self, result: DiagnosticResult) -> None:
         assert self.profile is not None
+        self._set_content_weights(has_profile=True)
         self.results_placeholder.grid_remove()
         self.results_text.grid()
         self.results_scroll.grid()
@@ -1051,13 +1363,24 @@ class WepApplication:
             if instruction:
                 lines.extend(("", self._t("report_recommendation"), instruction))
         self.results_text.delete("1.0", tk.END)
-        self.results_text.insert("1.0", "\n".join(lines))
+        severity = None
+        for index, line in enumerate(lines):
+            if line == self._t("report_warnings"):
+                severity = "warning"
+            elif line == self._t("report_errors"):
+                severity = "error"
+            elif line == self._t("report_recommendation"):
+                severity = "warning"
+            self.results_text.insert(tk.END, line, severity or ())
+            if index < len(lines) - 1:
+                self.results_text.insert(tk.END, "\n")
         self.raw_output_text.delete("1.0", tk.END)
         self.raw_output_text.insert(
             "1.0", result.raw_output or self._t("report_no_raw_output")
         )
 
     def export_json(self) -> None:
+        """Prompt for a destination and save the current profile as JSON."""
         if self.profile is None:
             messagebox.showinfo(
                 self._t("no_profile_title"),
@@ -1079,12 +1402,14 @@ class WepApplication:
         try:
             save_profile(self.profile, Path(path))
         except (OSError, TypeError, ValueError) as error:
+            self._log_event("log_export_error", state="error", error=error)
             messagebox.showerror(
                 self._t("json_save_error_title"),
                 self._t("json_save_error", error=error),
                 parent=self.root,
             )
             return
+        self._log_event("log_export_json", state="success", path=path)
         messagebox.showinfo(
             self._t("json_saved_title"),
             self._t("json_saved_message", path=path),
@@ -1092,6 +1417,7 @@ class WepApplication:
         )
 
     def export_csv(self) -> None:
+        """Prompt for a directory and export the current profile as CSV files."""
         if self.profile is None:
             messagebox.showinfo(
                 self._t("no_profile_title"),
@@ -1107,12 +1433,14 @@ class WepApplication:
         try:
             export_profile_csv(self.profile, Path(directory))
         except (OSError, TypeError, ValueError, csv.Error) as error:
+            self._log_event("log_export_error", state="error", error=error)
             messagebox.showerror(
                 self._t("csv_export_error_title"),
                 self._t("csv_export_error", error=error),
                 parent=self.root,
             )
             return
+        self._log_event("log_export_csv", state="success", directory=directory)
         messagebox.showinfo(
             self._t("csv_exported_title"),
             self._t("csv_exported_message", directory=directory),
@@ -1120,6 +1448,7 @@ class WepApplication:
         )
 
     def export_platformio_ini(self) -> None:
+        """Save the starter PlatformIO configuration in a chosen directory."""
         directory = filedialog.askdirectory(
             parent=self.root,
             title=self._t("platformio_folder_title"),
@@ -1137,6 +1466,7 @@ class WepApplication:
                 return
             save_platformio_ini(output_path)
         except OSError as error:
+            self._log_event("log_export_error", state="error", error=error)
             messagebox.showerror(
                 self._t("platformio_save_error_title"),
                 self._t("platformio_save_error", error=error),
@@ -1144,6 +1474,7 @@ class WepApplication:
             )
             return
 
+        self._log_event("log_export_platformio", state="success", path=output_path)
         messagebox.showinfo(
             self._t("platformio_saved_title"),
             self._t("platformio_saved_message", path=output_path),

@@ -1,3 +1,4 @@
+import ast
 import string
 import sys
 import tkinter as tk
@@ -6,6 +7,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+GUI_PATH = PROJECT_ROOT / "src" / "wep" / "gui.py"
+DIAGNOSTICS_PATH = PROJECT_ROOT / "src" / "wep" / "esptool_diagnostics.py"
+SYMBOL_SVG_PATH = PROJECT_ROOT / "src" / "wep" / "assets" / "wep_symbol.svg"
+SYMBOL_PNG_PATH = PROJECT_ROOT / "src" / "wep" / "assets" / "wep_symbol.png"
+ICON_PATH = PROJECT_ROOT / "src" / "wep" / "assets" / "wep.ico"
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from wep.esptool_diagnostics import DiagnosticResult, DiagnosticStatus
@@ -45,9 +51,57 @@ class TestLocalization(unittest.TestCase):
                     },
                 )
 
+    def test_gui_translation_calls_and_diagnostic_error_codes_are_translated(self):
+        gui_tree = ast.parse(GUI_PATH.read_text(encoding="utf-8"))
+        gui_keys = set()
+        for node in ast.walk(gui_tree):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            function = node.func
+            if isinstance(function, ast.Attribute) and function.attr == "_t":
+                key_argument = node.args[0]
+            elif isinstance(function, ast.Name) and function.id == "translate":
+                if len(node.args) < 2:
+                    continue
+                key_argument = node.args[1]
+            else:
+                continue
+            if isinstance(key_argument, ast.Constant) and isinstance(
+                key_argument.value, str
+            ):
+                gui_keys.add(key_argument.value)
+
+        diagnostic_tree = ast.parse(DIAGNOSTICS_PATH.read_text(encoding="utf-8"))
+        diagnostic_codes = set()
+        for node in ast.walk(diagnostic_tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Name) or node.func.id != "DiagnosticError":
+                continue
+            for keyword in node.keywords:
+                if keyword.arg == "code":
+                    diagnostic_codes.update(
+                        child.value
+                        for child in ast.walk(keyword.value)
+                        if isinstance(child, ast.Constant)
+                        and isinstance(child.value, str)
+                    )
+
+        translated_keys = set(STRINGS["en"])
+        self.assertEqual(gui_keys - translated_keys, set())
+        self.assertEqual(
+            {f"error_{code}" for code in diagnostic_codes} - translated_keys,
+            set(),
+        )
+
     def test_language_selector_options_and_english_default(self):
         self.assertEqual(DEFAULT_LANGUAGE, "en")
         self.assertEqual(LANGUAGE_NAMES, {"ru": "Русский", "en": "English"})
+
+    def test_brand_symbol_assets_use_the_exact_hieroglyph(self):
+        self.assertIn("\U000130e7", SYMBOL_SVG_PATH.read_text(encoding="utf-8"))
+        self.assertTrue(SYMBOL_PNG_PATH.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertTrue(ICON_PATH.read_bytes().startswith(b"\x00\x00\x01\x00"))
 
     def test_diagnostic_error_messages_are_localized_but_unknown_data_is_preserved(self):
         russian_timeout = STRINGS["ru"]["error_timeout"].format(seconds=20)

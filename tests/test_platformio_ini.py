@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import sys
 
@@ -13,6 +13,15 @@ from wep.platformio_ini import generate_platformio_ini, save_platformio_ini
 
 
 class TestPlatformioIni(unittest.TestCase):
+    @staticmethod
+    def _create_app_without_window():
+        app = WepApplication.__new__(WepApplication)
+        app.root = None
+        app.language = "en"
+        app._system_log_entries = []
+        app.system_log_text = Mock()
+        return app
+
     def test_generated_configuration_has_expected_section_and_values(self):
         content = generate_platformio_ini()
 
@@ -51,9 +60,7 @@ class TestPlatformioIni(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_path = Path(temporary_directory) / "platformio.ini"
             output_path.write_text("keep this", encoding="utf-8")
-            app = WepApplication.__new__(WepApplication)
-            app.root = None
-            app.language = "en"
+            app = self._create_app_without_window()
 
             with (
                 patch("wep.gui.filedialog.askdirectory", return_value=temporary_directory),
@@ -70,9 +77,7 @@ class TestPlatformioIni(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             output_path = Path(temporary_directory) / "platformio.ini"
             output_path.write_text("old config", encoding="utf-8")
-            app = WepApplication.__new__(WepApplication)
-            app.root = None
-            app.language = "en"
+            app = self._create_app_without_window()
 
             with (
                 patch("wep.gui.filedialog.askdirectory", return_value=temporary_directory),
@@ -83,6 +88,10 @@ class TestPlatformioIni(unittest.TestCase):
 
             confirm.assert_called_once()
             success.assert_called_once()
+            self.assertEqual(
+                app._system_log_entries[0][1],
+                "log_export_platformio",
+            )
             self.assertEqual(
                 output_path.read_bytes(),
                 generate_platformio_ini().replace("\n", "\r\n").encode("utf-8"),
