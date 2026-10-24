@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -11,6 +12,9 @@ from wep.esptool_diagnostics import (
     TERMINATION_TIMEOUT_SECONDS,
     TIMEOUT_SECONDS,
     DiagnosticStatus,
+    _diagnose_with_api,
+    _result_from_output,
+    _run_esptool_api,
     diagnose_esp32,
 )
 
@@ -21,6 +25,79 @@ class TestEspToolDiagnostics(unittest.TestCase):
         process.communicate.return_value = (output, None)
         process.returncode = returncode
         return process
+
+    @patch("wep.esptool_diagnostics.subprocess.Popen")
+    @patch("wep.esptool_diagnostics._diagnose_with_api")
+    def test_frozen_runtime_uses_api_instead_of_relaunching_executable(
+        self, diagnose_with_api, popen
+    ):
+        diagnose_with_api.return_value = Mock(status=DiagnosticStatus.SUCCESS)
+
+        with patch.object(sys, "_MEIPASS", "frozen-test", create=True):
+            result = diagnose_esp32("COM_FAKE")
+
+        self.assertIs(result, diagnose_with_api.return_value)
+        diagnose_with_api.assert_called_once_with(
+            "COM_FAKE", manual_bootloader=False
+        )
+        popen.assert_not_called()
+
+    def test_api_worker_preserves_error_output_and_nonzero_exit(self):
+        esptool = types.ModuleType("esptool")
+
+        def fail_diagnostic(_argv):
+            print("No serial data received")
+            raise SystemExit(2)
+
+        esptool.main = fail_diagnostic
+        connection = Mock()
+
+        with patch.dict(sys.modules, {"esptool": esptool}):
+            _run_esptool_api(connection, "COM_FAKE", False)
+
+        output, returncode = connection.send.call_args.args[0]
+        self.assertEqual(output, "No serial data received\n")
+        self.assertEqual(returncode, 2)
+
+        result = _result_from_output("COM_FAKE", output, returncode)
+        self.assertEqual(result.error.code, "no_serial_data")
+        self.assertEqual(result.raw_output, output)
+
+    def test_api_worker_reports_missing_esptool_import(self):
+        connection = Mock()
+
+        with patch.dict(sys.modules, {"esptool": None}):
+            _run_esptool_api(connection, "COM_FAKE", False)
+
+        output, returncode = connection.send.call_args.args[0]
+        self.assertEqual(returncode, 1)
+        self.assertIn("ModuleNotFoundError", output)
+        result = _result_from_output("COM_FAKE", output, returncode)
+        self.assertEqual(result.error.code, "esptool_error")
+        self.assertEqual(result.raw_output, output)
+
+    @patch("wep.esptool_diagnostics.TIMEOUT_SECONDS", 0)
+    @patch("wep.esptool_diagnostics.multiprocessing.get_context")
+    def test_frozen_api_timeout_terminates_child_process(self, get_context):
+        context = Mock()
+        receiver = Mock()
+        receiver.poll.return_value = False
+        sender = Mock()
+        process = Mock()
+        process.is_alive.side_effect = [True, False, False]
+        context.Pipe.return_value = (receiver, sender)
+        context.Process.return_value = process
+        get_context.return_value = context
+
+        result = _diagnose_with_api("COM_FAKE")
+
+        self.assertEqual(result.error.code, "timeout")
+        process.terminate.assert_called_once_with()
+        process.join.assert_called_once_with(
+            timeout=TERMINATION_TIMEOUT_SECONDS
+        )
+        receiver.close.assert_called_once_with()
+        sender.close.assert_called_once_with()
 
     @patch("wep.esptool_diagnostics.subprocess.Popen")
     def test_returns_chip_type_and_mac_for_selected_port(self, popen):

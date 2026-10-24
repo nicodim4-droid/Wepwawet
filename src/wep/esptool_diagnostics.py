@@ -1,10 +1,18 @@
 """Read-only ESP32 identification through esptool."""
 
+from __future__ import annotations
+
+import contextlib
+import io
+import multiprocessing
 import re
 import subprocess
 import sys
+import time
+import traceback
 from dataclasses import dataclass
 from enum import Enum
+from multiprocessing.connection import Connection
 
 TIMEOUT_SECONDS = 20
 TERMINATION_TIMEOUT_SECONDS = 2
@@ -13,6 +21,186 @@ MANUAL_BOOTLOADER_INSTRUCTION = (
     "нажмите и отпустите RESET/EN, затем отпустите BOOT. После входа платы "
     "в режим загрузчика повторите диагностику."
 )
+
+
+def _diagnose_with_api(
+    port: str, *, manual_bootloader: bool = False
+) -> DiagnosticResult:
+    """Run the esptool API in a killable child process for frozen builds."""
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_run_esptool_api,
+        args=(sender, port, manual_bootloader),
+        name="wep-esptool",
+    )
+    try:
+        process.start()
+    except (OSError, RuntimeError) as error:
+        receiver.close()
+        sender.close()
+        return DiagnosticResult(
+            port=port,
+            chip_type=None,
+            mac_address=None,
+            status=DiagnosticStatus.FAILED,
+            error=DiagnosticError(
+                code="process_start_failed",
+                message=f"Не удалось запустить esptool: {error}",
+            ),
+        )
+    sender.close()
+
+    deadline = time.monotonic() + TIMEOUT_SECONDS
+    try:
+        api_result = None
+        while time.monotonic() < deadline:
+            if receiver.poll(min(0.1, max(0, deadline - time.monotonic()))):
+                try:
+                    api_result = receiver.recv()
+                except EOFError:
+                    break
+                break
+            if not process.is_alive():
+                break
+
+        if api_result is None and receiver.poll():
+            try:
+                api_result = receiver.recv()
+            except EOFError:
+                pass
+
+        if api_result is not None:
+            output, returncode = api_result
+            process.join(timeout=TERMINATION_TIMEOUT_SECONDS)
+            if process.is_alive():
+                try:
+                    process.terminate()
+                except OSError as error:
+                    if process.is_alive():
+                        return DiagnosticResult(
+                            port=port,
+                            chip_type=None,
+                            mac_address=None,
+                            status=DiagnosticStatus.FAILED,
+                            error=DiagnosticError(
+                                code="process_termination_failed",
+                                message=(
+                                    "Не удалось завершить процесс esptool: "
+                                    f"{error}"
+                                ),
+                            ),
+                            raw_output=output,
+                        )
+                process.join(timeout=TERMINATION_TIMEOUT_SECONDS)
+            if process.is_alive():
+                return DiagnosticResult(
+                    port=port,
+                    chip_type=None,
+                    mac_address=None,
+                    status=DiagnosticStatus.FAILED,
+                    error=DiagnosticError(
+                        code="process_termination_timeout",
+                        message=(
+                            "Не удалось подтвердить завершение процесса "
+                            "esptool за "
+                            f"{TERMINATION_TIMEOUT_SECONDS} секунды."
+                        ),
+                    ),
+                    raw_output=output,
+                )
+            return _result_from_output(port, output, returncode)
+
+        if process.is_alive():
+            try:
+                process.terminate()
+            except OSError as error:
+                if process.is_alive():
+                    return DiagnosticResult(
+                        port=port,
+                        chip_type=None,
+                        mac_address=None,
+                        status=DiagnosticStatus.FAILED,
+                        error=DiagnosticError(
+                            code="process_termination_failed",
+                            message=(
+                                "Не удалось завершить зависший esptool: "
+                                f"{error}"
+                            ),
+                        ),
+                    )
+            process.join(timeout=TERMINATION_TIMEOUT_SECONDS)
+            if process.is_alive():
+                return DiagnosticResult(
+                    port=port,
+                    chip_type=None,
+                    mac_address=None,
+                    status=DiagnosticStatus.FAILED,
+                    error=DiagnosticError(
+                        code="process_termination_timeout",
+                        message=(
+                            "Не удалось подтвердить завершение процесса "
+                            "esptool за "
+                            f"{TERMINATION_TIMEOUT_SECONDS} секунды; процесс "
+                            "может оставаться активным."
+                        ),
+                    ),
+                )
+            return _result_from_output(
+                port, None, returncode=None, timeout=True
+            )
+
+        return DiagnosticResult(
+            port=port,
+            chip_type=None,
+            mac_address=None,
+            status=DiagnosticStatus.FAILED,
+            error=DiagnosticError(
+                code="process_failed",
+                message="Процесс esptool завершился без диагностического результата.",
+            ),
+        )
+    finally:
+        receiver.close()
+        if not process.is_alive():
+            process.close()
+
+
+def _run_esptool_api(
+    connection: Connection, port: str, manual_bootloader: bool
+) -> None:
+    output = io.StringIO()
+    returncode = 0
+    try:
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            try:
+                import esptool
+
+                esptool.main(
+                    [
+                        "--port",
+                        port,
+                        "--before",
+                        "no-reset" if manual_bootloader else "default-reset",
+                        "--after",
+                        "hard-reset",
+                        "read-mac",
+                    ]
+                )
+            except SystemExit as error:
+                if error.code is None:
+                    returncode = 0
+                elif isinstance(error.code, int):
+                    returncode = error.code
+                else:
+                    returncode = 1
+                    print(error.code, file=sys.stderr)
+            except Exception:
+                returncode = 1
+                traceback.print_exc(file=output)
+        connection.send((output.getvalue(), returncode))
+    finally:
+        connection.close()
 
 _CHIP_TYPE_PATTERN = re.compile(
     r"^\s*Chip type:\s*(.+?)\s*$", re.IGNORECASE | re.MULTILINE
@@ -85,6 +273,11 @@ def diagnose_esp32(
                 message="Перед диагностикой необходимо выбрать COM-порт.",
             ),
         )
+
+    # In PyInstaller one-file builds sys.executable points to the EXE itself,
+    # which causes recursive execution. Detect this and use the Python API.
+    if hasattr(sys, "_MEIPASS"):
+        return _diagnose_with_api(port, manual_bootloader=manual_bootloader)
 
     command = [
         sys.executable,
