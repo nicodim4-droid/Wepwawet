@@ -17,7 +17,8 @@ except ModuleNotFoundError as error:
     WepTextualApp = None
 
 if importlib.util.find_spec("textual") is not None:
-    from textual.widgets import Button, Select, Static, TextArea
+    from textual.containers import VerticalScroll
+    from textual.widgets import Button, Static, TextArea
 
     from wep.esptool_diagnostics import (
         DiagnosticResult,
@@ -56,15 +57,18 @@ class TestTextualApp(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(app.query_one("#save-json", Button).disabled)
                 self.assertIn(
                     "N/A",
-                    str(app.query_one("#profile-data", Static).renderable),
+                    app.query_one("#profile-data", TextArea).text,
                 )
                 self.assertIn(
                     "No profile",
-                    str(app.query_one("#profile-data", Static).renderable),
+                    app.query_one("#profile-data", TextArea).text,
                 )
                 self.assertNotIn(
                     "ESP32-D0WD",
-                    str(app.query_one("#profile-data", Static).renderable),
+                    app.query_one("#profile-data", TextArea).text,
+                )
+                self.assertTrue(
+                    app.query_one("#profile-data", TextArea).read_only
                 )
 
     async def test_diagnostic_button_calls_existing_diagnostic_in_worker(self):
@@ -95,8 +99,7 @@ class TestTextualApp(unittest.IsolatedAsyncioTestCase):
             self._settings_patches(stack)
             app = WepTextualApp()
             async with app.run_test(size=(140, 45)) as pilot:
-                app.query_one("#port-select", Select).value = "COM4"
-                await pilot.pause()
+                await pilot.click("#port-option-0")
                 self.assertFalse(
                     app.query_one("#run-diagnostics", Button).disabled
                 )
@@ -118,7 +121,7 @@ class TestTextualApp(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertIn(
                     "Revision: 0.4 [esptool; confirmed]",
-                    str(app.query_one("#profile-data", Static).renderable),
+                    app.query_one("#profile-data", TextArea).text,
                 )
                 self.assertIn(
                     "DEVICE RESPONDED / NOT CONNECTED",
@@ -140,8 +143,7 @@ class TestTextualApp(unittest.IsolatedAsyncioTestCase):
             self._settings_patches(stack)
             app = WepTextualApp()
             async with app.run_test(size=(140, 45)) as pilot:
-                app.query_one("#port-select", Select).value = "COM7"
-                await pilot.pause()
+                await pilot.click("#port-option-0")
                 await pilot.click("#run-diagnostics")
                 await pilot.pause(0.2)
 
@@ -167,8 +169,7 @@ class TestTextualApp(unittest.IsolatedAsyncioTestCase):
             self._settings_patches(stack)
             app = WepTextualApp()
             async with app.run_test(size=(140, 45)) as pilot:
-                app.query_one("#port-select", Select).value = "COM3"
-                await pilot.pause()
+                await pilot.click("#port-option-0")
                 await pilot.click("#scan-ports")
                 await pilot.pause()
 
@@ -176,6 +177,37 @@ class TestTextualApp(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([port.name for port in app.ports], ["COM8"])
                 self.assertTrue(
                     app.query_one("#run-diagnostics", Button).disabled
+                )
+
+    async def test_first_scan_lists_ports_without_selecting_or_connecting(self):
+        port = SerialPort("COM5", "USB UART", 0x10C4, 0xEA60, None)
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch("wep.textual_app.list_serial_ports", return_value=[port])
+            )
+            self._settings_patches(stack)
+            app = WepTextualApp()
+            async with app.run_test(size=(140, 45)) as pilot:
+                self.assertIsNone(app.selected_port)
+                self.assertTrue(
+                    app.query_one("#run-diagnostics", Button).disabled
+                )
+                self.assertEqual(
+                    app.query_one("#port-option-0", Button).name,
+                    "COM5",
+                )
+                status = str(
+                    app.query_one("#status-line", Static).renderable
+                )
+                self.assertIn("NOT CONNECTED", status)
+                await pilot.click("#port-option-0")
+                self.assertEqual(app.selected_port, "COM5")
+                self.assertIn("PORT DETECTED / NOT CONNECTED", str(
+                    app.query_one("#status-line", Static).renderable
+                ))
+                self.assertIn(
+                    "selected-port",
+                    app.query_one("#port-option-0", Button).classes,
                 )
 
     async def test_layout_and_saved_language_and_theme_are_responsive(self):
@@ -201,19 +233,145 @@ class TestTextualApp(unittest.IsolatedAsyncioTestCase):
                     "compact-layout",
                     app.query_one("#main-grid").classes,
                 )
-                app.query_one("#language-select", Select).value = "ru"
-                await pilot.pause()
+                await pilot.click("#language-ru")
                 self.assertEqual(app.language, "ru")
                 self.assertTrue(save_language.called)
                 self.assertEqual(
                     app.query_one("#scan-ports", Button).label.plain,
                     "СКАНИРОВАТЬ ПОРТЫ",
                 )
+                self.assertEqual(
+                    app.query_one("#run-diagnostics", Button).label.plain,
+                    "СКАНИРОВАТЬ",
+                )
+                self.assertEqual(
+                    app.query_one("#save-json", Button).label.plain,
+                    "Создать JSON",
+                )
+                self.assertIn(
+                    "active-toggle",
+                    app.query_one("#language-ru", Button).classes,
+                )
 
-                app.query_one("#theme-select", Select).value = "light"
-                await pilot.pause()
+                progress_bar = app.query_one(
+                    "#diagnostic-progress"
+                ).query_one("Bar")
+                self.assertIn(
+                    "#888888",
+                    str(
+                        progress_bar.get_component_rich_style(
+                            "bar--indeterminate"
+                        ).color
+                    ),
+                )
+                await pilot.click("#theme-light")
                 self.assertIn("light-theme", app.screen.classes)
                 self.assertTrue(save_theme.called)
+                self.assertIn(
+                    "#888888",
+                    str(
+                        progress_bar.get_component_rich_style(
+                            "bar--indeterminate"
+                        ).color
+                    ),
+                )
+                self.assertIn(
+                    "active-toggle",
+                    app.query_one("#theme-light", Button).classes,
+                )
+                await pilot.click("#language-en")
+                await pilot.click("#theme-dark")
+                self.assertEqual(app.language, "en")
+                self.assertEqual(app.color_scheme, "dark")
+                self.assertEqual(
+                    app.query_one("#run-diagnostics", Button).label.plain,
+                    "SCAN",
+                )
+                self.assertEqual(
+                    app.query_one("#save-json", Button).label.plain,
+                    "Create JSON",
+                )
+
+    async def test_about_dialog_shows_version_not_in_header(self):
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch("wep.textual_app.list_serial_ports", return_value=[])
+            )
+            self._settings_patches(stack)
+            app = WepTextualApp()
+            async with app.run_test(size=(140, 45)) as pilot:
+                self.assertFalse(app.query("#version"))
+                await pilot.click("#about")
+                self.assertIn(
+                    "0.1.0",
+                    str(
+                        app.screen.query_one(
+                            "#about-version",
+                            Static,
+                        ).renderable
+                    ),
+                )
+                await pilot.click("#close-about")
+
+    async def test_ports_are_clickable_hoverable_and_scrollable(self):
+        ports = [
+            SerialPort(f"COM{index}", f"USB adapter {index}", None, None, None)
+            for index in range(1, 13)
+        ]
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch("wep.textual_app.list_serial_ports", return_value=ports)
+            )
+            self._settings_patches(stack)
+            app = WepTextualApp()
+            async with app.run_test(size=(80, 24)) as pilot:
+                port_list = app.query_one("#port-list", VerticalScroll)
+                self.assertGreater(port_list.max_scroll_y, 0)
+
+                hovered = app.query_one("#port-option-0", Button)
+                normal_background = hovered.styles.background
+                await pilot.hover("#port-option-0", offset=(2, 1))
+                self.assertTrue(hovered.mouse_hover)
+                self.assertNotIn("selected-port", hovered.classes)
+                hover_background = hovered.styles.background
+                self.assertNotEqual(normal_background, hover_background)
+
+                await pilot.click("#port-option-0", offset=(2, 1))
+                self.assertEqual(app.selected_port, "COM1")
+                self.assertIn(
+                    "selected-port",
+                    hovered.classes,
+                )
+                selected_background = hovered.styles.background
+                self.assertNotEqual(hover_background, selected_background)
+                await pilot.click("#theme-light")
+                self.assertNotEqual(
+                    selected_background,
+                    hovered.styles.background,
+                )
+
+    async def test_profile_text_can_be_selected_and_copied(self):
+        profile = InspectionProfile(
+            device_info={
+                "serial_port": ObservedValue(
+                    "COM3", "serial_port", ConfidenceStatus.CONFIRMED
+                )
+            }
+        )
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch("wep.textual_app.list_serial_ports", return_value=[])
+            )
+            self._settings_patches(stack)
+            app = WepTextualApp()
+            app.profile = profile
+            async with app.run_test(size=(140, 45)) as pilot:
+                profile_text = app.query_one("#profile-data", TextArea)
+                await pilot.click("#profile-data")
+                profile_text.select_all()
+                with patch.object(app, "copy_to_clipboard") as copy:
+                    await pilot.press("ctrl+c")
+                    copy.assert_called_once_with(profile_text.text)
 
     async def test_export_buttons_use_existing_profile_functions(self):
         profile = InspectionProfile(
@@ -229,22 +387,48 @@ class TestTextualApp(unittest.IsolatedAsyncioTestCase):
             )
             self._settings_patches(stack)
             temp_directory = stack.enter_context(tempfile.TemporaryDirectory())
+            root = Path(temp_directory)
+            json_path = root / "profile.json"
+            csv_directory = root / "csv"
+            csv_directory.mkdir()
+            ini_path = root / "platformio.ini"
+            choose_file = stack.enter_context(
+                patch(
+                    "wep.textual_app.filedialog.asksaveasfilename",
+                    side_effect=["", str(json_path), str(ini_path)],
+                )
+            )
+            choose_directory = stack.enter_context(
+                patch(
+                    "wep.textual_app.filedialog.askdirectory",
+                    return_value=str(csv_directory),
+                )
+            )
             app = WepTextualApp()
             app.profile = profile
             async with app.run_test(size=(140, 45)) as pilot:
-                root = Path(temp_directory)
-                json_path = root / "profile.json"
-                csv_directory = root / "csv"
-                csv_directory.mkdir()
-                ini_path = root / "platformio.ini"
+                self.assertFalse(json_path.exists())
+                self.assertFalse(ini_path.exists())
+                choose_file.assert_not_called()
+                choose_directory.assert_not_called()
+                buttons = [
+                    app.query_one("#save-json", Button),
+                    app.query_one("#export-csv", Button),
+                    app.query_one("#save-platformio", Button),
+                ]
+                self.assertEqual(len({button.size.width for button in buttons}), 1)
+                self.assertEqual(len({button.size.height for button in buttons}), 1)
 
-                app.query_one("#json-path").value = str(json_path)
-                app.query_one("#csv-path").value = str(csv_directory)
-                app.query_one("#platformio-path").value = str(ini_path)
+                await pilot.click("#save-json")
+                self.assertFalse(json_path.exists())
+                choose_file.assert_called_once()
+
                 await pilot.click("#save-json")
                 await pilot.click("#export-csv")
                 await pilot.click("#save-platformio")
 
+                self.assertEqual(choose_file.call_count, 3)
+                choose_directory.assert_called_once()
                 self.assertTrue(json_path.is_file())
                 self.assertTrue((csv_directory / "profiles.csv").is_file())
                 self.assertTrue((csv_directory / "devices.csv").is_file())
@@ -261,13 +445,17 @@ class TestTextualApp(unittest.IsolatedAsyncioTestCase):
             temporary_directory = stack.enter_context(
                 tempfile.TemporaryDirectory()
             )
+            json_path = Path(temporary_directory) / "profile.json"
+            json_path.write_text("existing content", encoding="utf-8")
+            stack.enter_context(
+                patch(
+                    "wep.textual_app.filedialog.asksaveasfilename",
+                    return_value=str(json_path),
+                )
+            )
             app = WepTextualApp()
             app.profile = profile
             async with app.run_test(size=(140, 45)) as pilot:
-                json_path = Path(temporary_directory) / "profile.json"
-                json_path.write_text("existing content", encoding="utf-8")
-                app.query_one("#json-path").value = str(json_path)
-
                 await pilot.click("#save-json")
                 await pilot.click("#cancel-overwrite")
 

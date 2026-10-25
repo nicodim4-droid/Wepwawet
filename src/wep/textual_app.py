@@ -7,18 +7,16 @@ import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from tkinter import TclError, filedialog
 from textual import work
 from textual.app import App, ComposeResult
-from textual.color import Gradient
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Resize
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
-    Input,
     ProgressBar,
     RichLog,
-    Select,
     Static,
     TextArea,
 )
@@ -30,7 +28,7 @@ from wep.esptool_diagnostics import (
     DiagnosticStatus,
     diagnose_esp32,
 )
-from wep.localization import LANGUAGE_NAMES, translate, translate_known_message
+from wep.localization import translate, translate_known_message
 from wep.platformio_ini import save_platformio_ini
 from wep.profile import InspectionProfile
 from wep.profile_factory import profile_from_diagnostic_result
@@ -92,6 +90,40 @@ class OverwriteDialog(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class AboutDialog(ModalScreen[None]):
+    """Show the application identity and version."""
+
+    def __init__(self, language: str) -> None:
+        super().__init__()
+        self.language = language
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="about-dialog", classes="dialog-panel"):
+            yield Static(
+                translate(self.language, "about_title"),
+                classes="dialog-title",
+            )
+            yield Static(translate(self.language, "about_product_name"))
+            yield Static(translate(self.language, "about_description"))
+            yield Static(
+                translate(
+                    self.language,
+                    "about_version",
+                    version=VERSION,
+                ),
+                id="about-version",
+            )
+            yield Button(
+                translate(self.language, "about_close"),
+                id="close-about",
+                classes="active-toggle",
+            )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close-about":
+            self.dismiss(None)
+
+
 class WepTextualApp(App[None]):
     """Terminal UI that delegates device operations to WEP's existing modules."""
 
@@ -117,6 +149,7 @@ class WepTextualApp(App[None]):
         self._last_worker_error: Exception | None = None
         self._operation_key = "textual_diagnostics_not_run"
         self._operation_values: dict[str, object] = {}
+        self._export_paths: dict[str, str] = {}
 
     def _t(self, key: str, **values: object) -> str:
         return translate(self.language, key, **values)
@@ -124,53 +157,28 @@ class WepTextualApp(App[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="app-shell"):
             with Horizontal(id="header"):
-                yield Static("𓃧", id="brand-symbol")
-                yield Static(
-                    self._t("app_brand_name"),
-                    id="brand-name",
-                )
-                yield Static(
-                    self._t("app_version", version=VERSION),
-                    id="version",
-                )
-                yield Select(
-                    (
-                        (LANGUAGE_NAMES["en"], "en"),
-                        (LANGUAGE_NAMES["ru"], "ru"),
-                    ),
-                    value=self.language,
-                    allow_blank=False,
-                    id="language-select",
-                )
-                yield Select(
-                    (
-                        (self._t("theme_dark"), "dark"),
-                        (self._t("theme_light"), "light"),
-                    ),
-                    value=self.color_scheme,
-                    allow_blank=False,
-                    id="theme-select",
-                )
+                with Horizontal(id="header-left"):
+                    yield Static("𓃧", id="brand-symbol")
+                yield Static(self._t("app_brand_name"), id="brand-name")
+                with Horizontal(id="header-controls"):
+                    yield Button("RU", id="language-ru")
+                    yield Button("EN", id="language-en")
+                    yield Button("Dark", id="theme-dark")
+                    yield Button("Light", id="theme-light")
+                    yield Button(self._t("about_button"), id="about")
 
             with Vertical(id="workspace"):
                 with Horizontal(id="main-grid"):
                     with Vertical(id="serial-panel", classes="panel"):
                         yield Static(self._t("ports_section"), id="ports-title")
-                        yield Select(
-                            [],
-                            prompt=self._t("textual_select_port"),
-                            allow_blank=True,
-                            id="port-select",
-                            disabled=True,
-                        )
-                        yield Static(
-                            self._t("textual_unavailable"),
-                            id="port-details",
-                        )
+                        with VerticalScroll(id="port-list"):
+                            yield Static(
+                                self._t("ports_empty"),
+                                id="empty-ports",
+                            )
                         yield Button(
                             self._t("textual_scan_ports"),
                             id="scan-ports",
-                            classes="flat-button",
                         )
 
                     with Vertical(id="profile-panel", classes="panel"):
@@ -179,7 +187,11 @@ class WepTextualApp(App[None]):
                             id="profile-title",
                             classes="panel-title",
                         )
-                        yield Static(id="profile-data")
+                        yield TextArea(
+                            read_only=True,
+                            show_line_numbers=False,
+                            id="profile-data",
+                        )
 
                     with Vertical(id="right-column"):
                         with Vertical(
@@ -192,7 +204,7 @@ class WepTextualApp(App[None]):
                                 classes="panel-title",
                             )
                             yield Button(
-                                self._t("start_diagnostics"),
+                                self._t("textual_scan"),
                                 id="run-diagnostics",
                                 variant="primary",
                                 disabled=True,
@@ -201,12 +213,6 @@ class WepTextualApp(App[None]):
                                 total=None,
                                 show_percentage=False,
                                 show_eta=False,
-                                gradient=Gradient.from_colors(
-                                    "#164D40",
-                                    "#21866B",
-                                    "#35C99A",
-                                    "#54FFCA",
-                                ),
                                 id="diagnostic-progress",
                             )
                             yield Static(id="diagnostic-summary")
@@ -226,38 +232,23 @@ class WepTextualApp(App[None]):
                                 id="export-title",
                                 classes="panel-title",
                             )
-                            with Horizontal(classes="export-row"):
-                                yield Input(
-                                    placeholder=self._t("textual_path_json"),
-                                    id="json-path",
-                                )
-                                yield Button.success(
-                                    self._t("save_json"),
-                                    id="save-json",
-                                    classes="flat-button",
-                                    disabled=True,
-                                )
-                            with Horizontal(classes="export-row"):
-                                yield Input(
-                                    placeholder=self._t("textual_path_csv"),
-                                    id="csv-path",
-                                )
-                                yield Button(
-                                    self._t("export_csv"),
-                                    id="export-csv",
-                                    classes="flat-button",
-                                    disabled=True,
-                                )
-                            with Horizontal(classes="export-row"):
-                                yield Input(
-                                    placeholder=self._t("textual_path_ini"),
-                                    id="platformio-path",
-                                )
-                                yield Button(
-                                    self._t("create_platformio"),
-                                    id="save-platformio",
-                                    classes="flat-button",
-                                )
+                            yield Button(
+                                self._t("textual_create_json"),
+                                id="save-json",
+                                classes="export-button",
+                                disabled=True,
+                            )
+                            yield Button(
+                                self._t("textual_create_csv"),
+                                id="export-csv",
+                                classes="export-button",
+                                disabled=True,
+                            )
+                            yield Button(
+                                self._t("textual_create_platformio"),
+                                id="save-platformio",
+                                classes="export-button",
+                            )
 
                 with Vertical(id="log-panel", classes="panel"):
                     yield Static(
@@ -275,11 +266,12 @@ class WepTextualApp(App[None]):
 
             yield Static(id="status-line")
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self._apply_theme()
         self._apply_responsive_layout(self.screen.size.width)
+        self._update_header_controls()
         self._log_event(self._t("textual_app_started"), "info")
-        self.refresh_ports()
+        await self.refresh_ports()
         self._render_profile()
         self._render_diagnostics()
         self._render_status()
@@ -287,74 +279,87 @@ class WepTextualApp(App[None]):
     def on_resize(self, event: Resize) -> None:
         self._apply_responsive_layout(event.size.width)
 
-    def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id == "port-select":
-            self.selected_port = (
-                None if event.value is Select.BLANK else str(event.value)
-            )
-            self._render_port_details()
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id or ""
+        if event.button.has_class("port-option"):
+            self.selected_port = event.button.name
+            self._update_port_selection()
             self._update_controls()
             self._render_status()
-            return
+        elif button_id == "scan-ports":
+            await self.refresh_ports()
+        elif button_id == "run-diagnostics":
+            self.start_diagnostic()
+        elif button_id == "language-ru":
+            self._change_language("ru")
+        elif button_id == "language-en":
+            self._change_language("en")
+        elif button_id == "theme-dark":
+            self._change_theme("dark")
+        elif button_id == "theme-light":
+            self._change_theme("light")
+        elif button_id == "about":
+            self.push_screen(AboutDialog(self.language))
+        elif button_id == "save-json":
+            self._request_export_path("json")
+        elif button_id == "export-csv":
+            self._request_export_path("csv")
+        elif button_id == "save-platformio":
+            self._request_export_path("platformio")
 
-        if event.select.id == "language-select":
-            language = str(event.value)
-            if language not in LANGUAGE_NAMES:
-                return
-            self.language = language
-            self._refresh_localized_content()
-            try:
-                save_language(language)
-            except (OSError, ValueError) as error:
-                self._log_event(
-                    self._t("log_settings_error", error=error),
-                    "error",
-                )
-                self.notify(
-                    self._t("settings_language_error", error=error),
-                    title=self._t("settings_error_title"),
-                    severity="error",
-                )
-            return
+    def _change_language(self, language: str) -> None:
+        self.language = language
+        self._refresh_localized_content()
+        self._update_header_controls()
+        try:
+            save_language(language)
+        except (OSError, ValueError) as error:
+            self._log_event(
+                self._t("log_settings_error", error=error),
+                "error",
+            )
+            self.notify(
+                self._t("settings_language_error", error=error),
+                title=self._t("settings_error_title"),
+                severity="error",
+            )
 
-        if event.select.id == "theme-select":
-            theme = str(event.value)
-            if theme not in {"dark", "light"}:
-                return
-            self.color_scheme = theme
-            self._apply_theme()
-            try:
-                save_theme(theme)
-            except (OSError, ValueError) as error:
-                self._log_event(
-                    self._t("log_settings_error", error=error),
-                    "error",
-                )
-                self.notify(
-                    self._t("settings_theme_error", error=error),
-                    title=self._t("settings_error_title"),
-                    severity="error",
-                )
+    def _change_theme(self, theme: str) -> None:
+        self.color_scheme = theme
+        self._apply_theme()
+        self._update_header_controls()
+        try:
+            save_theme(theme)
+        except (OSError, ValueError) as error:
+            self._log_event(
+                self._t("log_settings_error", error=error),
+                "error",
+            )
+            self.notify(
+                self._t("settings_theme_error", error=error),
+                title=self._t("settings_error_title"),
+                severity="error",
+            )
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        actions = {
-            "scan-ports": self.refresh_ports,
-            "run-diagnostics": self.start_diagnostic,
-            "save-json": self.save_json,
-            "export-csv": self.export_csv,
-            "save-platformio": self.export_platformio_ini,
-        }
-        action = actions.get(event.button.id or "")
-        if action is not None:
-            action()
+    def _update_header_controls(self) -> None:
+        for button_id, active in (
+            ("language-ru", self.language == "ru"),
+            ("language-en", self.language == "en"),
+            ("theme-dark", self.color_scheme == "dark"),
+            ("theme-light", self.color_scheme == "light"),
+        ):
+            self.query_one(f"#{button_id}", Button).set_class(
+                active,
+                "active-toggle",
+            )
 
-    def action_scan_ports(self) -> None:
-        self.refresh_ports()
+    async def action_scan_ports(self) -> None:
+        await self.refresh_ports()
 
     def action_run_diagnostics(self) -> None:
         self.start_diagnostic()
 
-    def refresh_ports(self) -> None:
+    async def refresh_ports(self) -> None:
         """Refresh the OS port list without opening or reconnecting a device."""
         self._log_event(self._t("textual_scan_started"), "info")
         previous_selection = self.selected_port
@@ -363,12 +368,11 @@ class WepTextualApp(App[None]):
         except OSError as error:
             self.ports = []
             self.selected_port = None
-            self._set_port_options()
             self._log_event(
                 self._t("log_ports_error", error=error),
                 "error",
             )
-            self._render_port_details()
+            await self._render_port_list()
             self._update_controls()
             self.notify(
                 self._t("ports_error_message", error=error),
@@ -379,10 +383,10 @@ class WepTextualApp(App[None]):
             return
 
         names = {port.name for port in self.ports}
-        self.selected_port = (
-            previous_selection if previous_selection in names else None
-        )
-        self._set_port_options()
+        if previous_selection in names:
+            self.selected_port = previous_selection
+        else:
+            self.selected_port = None
         self._log_event(
             self._t("log_ports_found", count=len(self.ports)),
             "info",
@@ -393,24 +397,39 @@ class WepTextualApp(App[None]):
                 title=self._t("ports_section"),
                 severity="warning",
             )
-        self._render_port_details()
+        await self._render_port_list()
         self._update_controls()
         self._render_status()
 
-    def _set_port_options(self) -> None:
-        port_select = self.query_one("#port-select", Select)
-        port_select.set_options(
-            (
-                (self._port_label(port), port.name)
-                for port in self.ports
+    async def _render_port_list(self) -> None:
+        port_list = self.query_one("#port-list", VerticalScroll)
+        await port_list.remove_children()
+        if not self.ports:
+            await port_list.mount(
+                Static(self._t("ports_empty"), id="empty-ports")
+            )
+            return
+        await port_list.mount(
+            *(
+                Button(
+                    self._port_label(port),
+                    name=port.name,
+                    id=f"port-option-{index}",
+                    classes="port-option",
+                )
+                for index, port in enumerate(self.ports)
             )
         )
-        port_select.disabled = not self.ports
-        port_select.value = (
-            self.selected_port
-            if self.selected_port is not None
-            else Select.BLANK
-        )
+        self._update_port_selection()
+
+    def _update_port_selection(self) -> None:
+        for button in self.query_one("#port-list", VerticalScroll).query(
+            Button
+        ):
+            button.set_class(
+                button.name == self.selected_port,
+                "selected-port",
+            )
 
     def _port_label(self, port: SerialPort) -> str:
         description = port.description or self._t(
@@ -423,23 +442,6 @@ class WepTextualApp(App[None]):
             metadata.append(f"S/N {port.serial_number}")
         suffix = f"  [{'; '.join(metadata)}]" if metadata else ""
         return f"{port.name} — {description}{suffix}"
-
-    def _render_port_details(self) -> None:
-        port = next(
-            (
-                item
-                for item in self.ports
-                if item.name == self.selected_port
-            ),
-            None,
-        )
-        if port is None:
-            details = self._t(
-                "ports_empty" if not self.ports else "textual_select_port"
-            )
-        else:
-            details = self._port_label(port)
-        self.query_one("#port-details", Static).update(details)
 
     def start_diagnostic(self) -> None:
         if self._diagnostic_running:
@@ -578,30 +580,28 @@ class WepTextualApp(App[None]):
     def _render_profile(self) -> None:
         profile = self.profile
         if profile is None:
-            self.query_one("#profile-data", Static).update(
-                "\n".join(
-                    (
-                        self._t("textual_no_profile"),
-                        "",
-                        self._t("textual_chip_family")
-                        + f": {self._t('textual_unavailable')}",
-                        self._t("report_mac_address")
-                        + f": {self._t('textual_unavailable')}",
-                        self._t("textual_revision")
-                        + f": {self._t('textual_unavailable')}",
-                        self._t("textual_core_count")
-                        + f": {self._t('textual_unavailable')}",
-                        self._t("textual_flash_size")
-                        + f": {self._t('textual_unavailable')}",
-                        self._t("textual_psram_size")
-                        + f": {self._t('textual_unavailable')}",
-                        self._t("textual_features")
-                        + f": {self._t('textual_unavailable')}",
-                        self._t("textual_source")
-                        + f": {self._t('textual_unavailable')}",
-                        self._t("textual_profile_state")
-                        + f": {self._t('textual_diagnostics_not_run')}",
-                    )
+            self.query_one("#profile-data", TextArea).text = "\n".join(
+                (
+                    self._t("textual_no_profile"),
+                    "",
+                    self._t("textual_chip_family")
+                    + f": {self._t('textual_unavailable')}",
+                    self._t("report_mac_address")
+                    + f": {self._t('textual_unavailable')}",
+                    self._t("textual_revision")
+                    + f": {self._t('textual_unavailable')}",
+                    self._t("textual_core_count")
+                    + f": {self._t('textual_unavailable')}",
+                    self._t("textual_flash_size")
+                    + f": {self._t('textual_unavailable')}",
+                    self._t("textual_psram_size")
+                    + f": {self._t('textual_unavailable')}",
+                    self._t("textual_features")
+                    + f": {self._t('textual_unavailable')}",
+                    self._t("textual_source")
+                    + f": {self._t('textual_unavailable')}",
+                    self._t("textual_profile_state")
+                    + f": {self._t('textual_diagnostics_not_run')}",
                 )
             )
             return
@@ -662,7 +662,7 @@ class WepTextualApp(App[None]):
                 f"{self._t('textual_profile_state')}: {profile_status}",
             )
         )
-        self.query_one("#profile-data", Static).update("\n".join(lines))
+        self.query_one("#profile-data", TextArea).text = "\n".join(lines)
 
     def _revision_value(self, profile: InspectionProfile) -> str:
         observation = profile.device_info.get("chip_model")
@@ -788,6 +788,7 @@ class WepTextualApp(App[None]):
 
     def _refresh_localized_content(self) -> None:
         label_keys = {
+            "brand-name": "app_brand_name",
             "ports-title": "ports_section",
             "profile-title": "textual_device_profile",
             "diagnostics-title": "diagnostics_section",
@@ -798,38 +799,93 @@ class WepTextualApp(App[None]):
             self.query_one(f"#{widget_id}", Static).update(self._t(key))
         button_keys = {
             "scan-ports": "textual_scan_ports",
-            "run-diagnostics": "start_diagnostics",
-            "save-json": "save_json",
-            "export-csv": "export_csv",
-            "save-platformio": "create_platformio",
+            "run-diagnostics": "textual_scan",
+            "save-json": "textual_create_json",
+            "export-csv": "textual_create_csv",
+            "save-platformio": "textual_create_platformio",
+            "about": "about_button",
         }
         for widget_id, key in button_keys.items():
             self.query_one(f"#{widget_id}", Button).label = self._t(key)
-        theme_select = self.query_one("#theme-select", Select)
-        theme_select.set_options(
-            (
-                (self._t("theme_dark"), "dark"),
-                (self._t("theme_light"), "light"),
+        if not self.ports:
+            self.query_one("#empty-ports", Static).update(
+                self._t("ports_empty")
             )
-        )
-        theme_select.value = self.color_scheme
-        self.query_one("#json-path", Input).placeholder = self._t(
-            "textual_path_json"
-        )
-        self.query_one("#csv-path", Input).placeholder = self._t(
-            "textual_path_csv"
-        )
-        self.query_one("#platformio-path", Input).placeholder = self._t(
-            "textual_path_ini"
-        )
-        self._set_port_options()
-        self._render_port_details()
+        else:
+            for button, port in zip(
+                self.query_one("#port-list", VerticalScroll).query(Button),
+                self.ports,
+            ):
+                button.label = self._port_label(port)
         self._render_profile()
         self._render_diagnostics()
         self._render_status()
 
+    def _request_export_path(self, operation: str) -> None:
+        try:
+            if operation == "json":
+                path = filedialog.asksaveasfilename(
+                    title=self._t("save_json_title"),
+                    initialdir=Path.cwd(),
+                    initialfile="wep-profile.json",
+                    defaultextension=".json",
+                    filetypes=(
+                        (self._t("json_files"), "*.json"),
+                        (self._t("all_files"), "*.*"),
+                    ),
+                )
+            elif operation == "csv":
+                path = filedialog.askdirectory(
+                    title=self._t("csv_folder_title"),
+                    initialdir=Path.cwd(),
+                    mustexist=True,
+                )
+            elif operation == "platformio":
+                path = filedialog.asksaveasfilename(
+                    title=self._t("save_platformio_title"),
+                    initialdir=Path.cwd(),
+                    initialfile="platformio.ini",
+                    defaultextension=".ini",
+                    filetypes=(
+                        (self._t("platformio_ini_files"), "*.ini"),
+                        (self._t("all_files"), "*.*"),
+                    ),
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported export operation: {operation}"
+                )
+        except TclError as error:
+            message = self._t("log_export_error", error=error)
+            self._log_event(message, "error")
+            self.notify(
+                message,
+                title=self._t("status_operation_error"),
+                severity="error",
+            )
+            return
+        self._complete_export_path(operation, path or None)
+
+    def _complete_export_path(
+        self,
+        operation: str,
+        path_text: str | None,
+    ) -> None:
+        if path_text is None:
+            return
+        if not path_text:
+            self.notify(self._t("textual_path_required"), severity="warning")
+            return
+        self._export_paths[operation] = path_text
+        actions = {
+            "json": self.save_json,
+            "csv": self.export_csv,
+            "platformio": self.export_platformio_ini,
+        }
+        actions[operation]()
+
     def save_json(self) -> None:
-        path_text = self.query_one("#json-path", Input).value.strip()
+        path_text = self._export_paths.get("json", "").strip()
         if self.profile is None:
             return
         if not path_text:
@@ -841,7 +897,7 @@ class WepTextualApp(App[None]):
         self._confirm_or_export(path, "json")
 
     def export_csv(self) -> None:
-        directory_text = self.query_one("#csv-path", Input).value.strip()
+        directory_text = self._export_paths.get("csv", "").strip()
         if self.profile is None:
             return
         if not directory_text:
@@ -860,7 +916,7 @@ class WepTextualApp(App[None]):
             self._perform_export("csv", directory)
 
     def export_platformio_ini(self) -> None:
-        path_text = self.query_one("#platformio-path", Input).value.strip()
+        path_text = self._export_paths.get("platformio", "").strip()
         if not path_text:
             self.notify(self._t("textual_path_required"), severity="warning")
             return

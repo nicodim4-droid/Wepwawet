@@ -5,10 +5,12 @@ basic identification data from ESP32 devices, and saving an inspection profile.
 It is a practical diagnostic aid, not a universal board or peripheral
 autodetector.
 
-![WEP running on Windows with the Russian interface and an empty profile](./docs/images/wep-ui.png)
+![WEP Textual prototype with a detected, not connected serial port and no device profile](./docs/images/wep-ui.png)
 
-This is a screenshot of the running application. The visible serial-port list
-is specific to the capture computer and will differ on other systems.
+This is a screenshot of the experimental Textual interface. A serial port was
+detected but no device connection or ESP32 diagnostic was performed, so no
+device profile is shown. The visible port list is specific to the capture
+computer and will differ on other systems.
 
 ## Features
 

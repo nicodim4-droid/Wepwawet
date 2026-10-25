@@ -3,6 +3,10 @@ Screen {
     color: #D6E0EA;
 }
 
+#profile-data .text-area--cursor-line {
+    background: transparent;
+}
+
 Screen.light-theme {
     background: #EAF0F4;
     color: #23364A;
@@ -17,7 +21,7 @@ Screen.light-theme {
 #header {
     height: 3;
     layout: horizontal;
-    align: left middle;
+    align: center middle;
     border-bottom: ascii #526176;
 }
 
@@ -25,28 +29,39 @@ Screen.light-theme #header {
     border-bottom: ascii #7E8FA1;
 }
 
+#header-left,
+#header-controls {
+    width: 1fr;
+    height: 100%;
+    align: left middle;
+}
+
+#header-controls {
+    layout: horizontal;
+    align: right middle;
+}
+
+#header-controls Button {
+    width: auto;
+    min-width: 0;
+    height: 3;
+    padding: 0 1;
+    margin: 0 0 0 1;
+}
+
 #brand-symbol {
-    width: 4;
+    width: auto;
     color: #54FFCA;
     text-style: bold;
+    content-align: center middle;
 }
 
 #brand-name {
-    width: 1fr;
+    width: auto;
     color: #54FFCA;
     text-style: bold;
-}
-
-#version {
-    width: 16;
-    color: #8294A9;
-    text-align: right;
-}
-
-#language-select,
-#theme-select {
-    width: 18;
-    margin-left: 1;
+    text-align: center;
+    content-align: center middle;
 }
 
 #workspace {
@@ -109,27 +124,68 @@ Screen.light-theme .panel-title {
     color: #6D4F91;
 }
 
-#port-select {
-    margin-top: 1;
-}
-
-#port-details {
+#port-list {
     height: 1fr;
-    min-height: 3;
+    min-height: 2;
     color: #8294A9;
-    padding-top: 1;
+    margin-top: 1;
+    overflow-y: auto;
 }
 
-Screen.light-theme #port-details {
+Screen.light-theme #port-list {
     color: #596C80;
 }
 
-#scan-ports {
-    width: 100%;
-    margin-top: 1;
+#empty-ports {
+    padding: 1;
 }
 
+Button.port-option {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    margin: 0 0 1 0;
+    padding: 0 1;
+    text-align: left;
+    content-align: left middle;
+    text-style: none;
+}
+
+Button.port-option:hover {
+    background: #263950;
+    color: #54FFCA;
+}
+
+Button.port-option.selected-port {
+    background: #15513F;
+    color: #FFFFFF;
+    text-style: bold;
+}
+
+Button.port-option.selected-port:hover {
+    background: #24654F;
+    color: #FFFFFF;
+}
+
+Screen.light-theme Button.port-option:hover {
+    background: #DDE8F0;
+    color: #087A5A;
+}
+
+Screen.light-theme Button.port-option.selected-port {
+    background: #B7E8D5;
+    color: #13533F;
+}
+
+Screen.light-theme Button.port-option.selected-port:hover {
+    background: #9DD9C1;
+    color: #103F32;
+}
+
+#scan-ports,
 #run-diagnostics {
+    width: 100%;
+    height: 3;
     margin-top: 1;
 }
 
@@ -137,6 +193,23 @@ Screen.light-theme #port-details {
     height: 1;
     margin-top: 1;
     display: none;
+}
+
+ProgressBar Bar {
+    & > .bar--bar {
+        color: #888888;
+        background: #3A3A3A;
+    }
+
+    & > .bar--complete {
+        color: #888888;
+        background: #3A3A3A;
+    }
+
+    & > .bar--indeterminate {
+        color: #888888;
+        background: #3A3A3A;
+    }
 }
 
 #diagnostic-summary {
@@ -168,7 +241,10 @@ Screen.light-theme #diagnostic-output {
 
 #profile-data {
     height: 1fr;
-    padding-top: 1;
+    margin-top: 1;
+    padding: 0 1;
+    border: none;
+    background: transparent;
     color: #D6E0EA;
 }
 
@@ -176,20 +252,12 @@ Screen.light-theme #profile-data {
     color: #23364A;
 }
 
-#export-panel .export-row {
+#export-panel .export-button {
+    width: 100%;
     height: 3;
-    layout: horizontal;
-    align: left middle;
-}
-
-.export-row Input {
-    width: 1fr;
-}
-
-.export-row Button {
-    width: auto;
-    min-width: 16;
-    margin-left: 1;
+    margin-top: 1;
+    content-align: center middle;
+    text-align: center;
 }
 
 #log-panel {
@@ -230,6 +298,21 @@ Screen.light-theme Button {
 
 Button:focus {
     border: ascii #54FFCA;
+    background-tint: transparent;
+    text-style: bold;
+}
+
+Button.active-toggle {
+    border: ascii #54FFCA;
+    background: #15513F;
+    color: #FFFFFF;
+    text-style: bold;
+}
+
+Screen.light-theme Button.active-toggle {
+    border: ascii #087A5A;
+    background: #B7E8D5;
+    color: #13533F;
 }
 
 Button.-primary {
@@ -264,30 +347,6 @@ Button.flat-button.-success {
 
 Button.flat-button.-warning {
     color: #FFCA70;
-}
-
-Input {
-    border: ascii #526176;
-    background: #09192B;
-    color: #D6E0EA;
-}
-
-Screen.light-theme Input {
-    border: ascii #7E8FA1;
-    background: #FFFFFF;
-    color: #23364A;
-}
-
-Select {
-    border: ascii #526176;
-    background: #102238;
-    color: #D6E0EA;
-}
-
-Screen.light-theme Select {
-    border: ascii #7E8FA1;
-    background: #F6F8FA;
-    color: #23364A;
 }
 
 ModalScreen {
@@ -342,15 +401,58 @@ ModalScreen {
     height: 14;
 }
 
-Screen.compact-screen #version {
-    display: none;
-}
-
-Screen.compact-screen #language-select,
-Screen.compact-screen #theme-select {
-    width: 14;
+Screen.compact-screen #header-controls Button {
+    padding: 0 1;
+    margin: 0;
 }
 
 Screen.compact-screen #header {
-    height: 4;
+    height: 5;
+    layout: vertical;
+}
+
+Screen.compact-screen #header-left {
+    width: 100%;
+    height: 1;
+    align: center middle;
+}
+
+Screen.compact-screen #brand-name {
+    width: 100%;
+    height: 1;
+}
+
+Screen.compact-screen #header-controls {
+    width: 100%;
+    height: 3;
+    align: center middle;
+}
+
+.dialog-panel {
+    width: 64;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    border: ascii #526176;
+    background: #102238;
+}
+
+Screen.light-theme .dialog-panel {
+    border: ascii #7E8FA1;
+    background: #F6F8FA;
+}
+
+.dialog-title {
+    color: #D9C1F2;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+Screen.light-theme .dialog-title {
+    color: #6D4F91;
+}
+
+#about-dialog Button {
+    width: 100%;
+    margin-top: 1;
 }
