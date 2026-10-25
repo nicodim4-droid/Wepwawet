@@ -1,4 +1,5 @@
 ﻿# -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hiddenimports = ['wep', 'wep.__main__']
@@ -11,6 +12,18 @@ datas = collect_data_files(
 )
 if not datas:
     raise RuntimeError('No esptool stub flasher data files were collected.')
+datas.append(
+    (
+        os.path.join('src', 'wep', 'assets', 'wep_symbol.png'),
+        os.path.join('wep', 'assets'),
+    )
+)
+datas.append(
+    (
+        os.path.join('src', 'wep', 'assets', 'wep.ico'),
+        os.path.join('wep', 'assets'),
+    )
+)
 
 
 a = Analysis(
@@ -43,9 +56,9 @@ exe = EXE(
     runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
+    icon=os.path.join('src', 'wep', 'assets', 'wep.ico'),
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
 )
-

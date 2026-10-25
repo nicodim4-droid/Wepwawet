@@ -26,6 +26,7 @@ class ObservedValue:
     confidence: ConfidenceStatus = ConfidenceStatus.UNKNOWN
 
     def to_dict(self) -> dict[str, str | int | float | bool | None]:
+        """Return this observation as a JSON-compatible mapping."""
         return {
             "value": self.value,
             "source": self.source,
@@ -41,6 +42,7 @@ class DiscoveredItem:
     details: dict[str, ObservedValue] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
+        """Return the item and its observations as a JSON-compatible mapping."""
         return {
             "name": self.name.to_dict(),
             "details": {
