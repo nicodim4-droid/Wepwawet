@@ -25,7 +25,8 @@ from wep.localization import (
     translate,
     translate_known_message,
 )
-from wep.profile import ConfidenceStatus, InspectionProfile, ObservedValue
+from wep.profile import InspectionProfile
+from wep.profile_factory import profile_from_diagnostic_result
 from wep.platformio_ini import save_platformio_ini
 from wep.serial_ports import SerialPort, list_serial_ports
 from wep.settings import (
@@ -1247,37 +1248,7 @@ class WepApplication:
 
     @staticmethod
     def _create_profile(result: DiagnosticResult) -> InspectionProfile:
-        device_info: dict[str, ObservedValue] = {
-            "serial_port": ObservedValue(
-                result.port, "serial_port", ConfidenceStatus.CONFIRMED
-            ),
-            "diagnostic_status": ObservedValue(
-                result.status.value, "esptool", ConfidenceStatus.CONFIRMED
-            ),
-        }
-        if result.chip_type is not None:
-            device_info["chip_model"] = ObservedValue(
-                result.chip_type, "esptool", ConfidenceStatus.CONFIRMED
-            )
-        if result.mac_address is not None:
-            device_info["mac_address"] = ObservedValue(
-                result.mac_address, "esptool", ConfidenceStatus.CONFIRMED
-            )
-        if result.raw_output:
-            device_info["diagnostic_raw_output"] = ObservedValue(
-                result.raw_output, "esptool", ConfidenceStatus.CONFIRMED
-            )
-
-        warnings: list[str] = []
-        errors: list[str] = []
-        if result.error is not None:
-            if result.status is DiagnosticStatus.PARTIAL:
-                warnings.append(result.error.message)
-            else:
-                errors.append(result.error.message)
-        return InspectionProfile(
-            device_info=device_info, warnings=warnings, errors=errors
-        )
+        return profile_from_diagnostic_result(result)
 
     def _render_profile(self, result: DiagnosticResult) -> None:
         assert self.profile is not None

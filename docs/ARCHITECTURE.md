@@ -2,20 +2,24 @@
 
 WEP is a Windows desktop application for discovering serial ports, reading a
 small set of ESP32 identification data with esptool, and saving an inspection
-profile. The GUI is implemented with Python's standard-library Tkinter and ttk.
-Hardware identification, data models, persistence, exports, settings, and
-translations remain separate modules under `src/wep/`.
+profile. The default GUI is implemented with Python's standard-library Tkinter and ttk.
+An optional Textual prototype uses the same hardware, data, persistence,
+export, settings, and translation modules under `src/wep/`.
 
 ## Module map
 
 | Module | Responsibility |
 | --- | --- |
 | `run_wep.py` | Source-checkout entry point; adds `src` to the import path, enables multiprocessing support for frozen builds, and starts the package. |
+| `run_wep_textual.py` | Separate source-checkout entry point for the optional Textual prototype. |
 | `src/wep/__main__.py` | Calls the GUI entry point when WEP is run as a module or packaged application. |
 | `src/wep/gui.py` | Tkinter window, UI state, user actions, worker-thread coordination, profile presentation, and localized copy/report text. |
+| `src/wep/textual_app.py` | Experimental terminal UI, port selection, diagnostic worker, event log, settings controls, and calls to existing save/export functions. |
+| `src/wep/textual_app.tcss` | Shared dark/light Alien-terminal styling and responsive panel layout for Textual. |
 | `src/wep/serial_ports.py` | Lists serial ports using pySerial; it does not identify the connected board model. |
 | `src/wep/esptool_diagnostics.py` | Runs the read-only esptool identification command, applies timeouts, captures output, and maps it to a structured diagnostic result. |
 | `src/wep/profile.py` | Profile and observation data classes, provenance/confidence values, and schema version. |
+| `src/wep/profile_factory.py` | Shared conversion of a diagnostic result into an inspection profile for both interfaces. |
 | `src/wep/storage.py` | UTF-8 JSON profile serialization and validation. |
 | `src/wep/csv_export.py` | Writes a profile as `profiles.csv`, `devices.csv`, and `observations.csv`. |
 | `src/wep/platformio_ini.py` | Produces and saves the application's current starter PlatformIO configuration. |
@@ -116,6 +120,14 @@ imports, collects JSON data from esptool's
 `targets/stub_flasher/` package directory, and packages the WEP image assets.
 The resulting application is a windowed `WEP.exe`. See
 [Development](./DEVELOPMENT.md) for the verified command and environment.
+
+The Textual prototype has a separate `run_wep_textual.py` entry point and an
+optional `requirements-textual.txt` dependency set. It does not replace the
+Tkinter entry point and is not included in the current EXE specification.
+Textual runs `diagnose_esp32()` in a thread worker; the diagnostic module keeps
+ownership of the serial/esptool behavior and its timeout. The terminal screen
+shows a confirmed response separately from a persistent connection, which the
+current one-shot diagnostic does not provide.
 
 ## Boundaries and current limitations
 

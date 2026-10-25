@@ -33,6 +33,8 @@ reviewed for the target hardware.
   Windows build.
 - Tkinter/Tcl-Tk, included with the standard Windows Python installer.
 - Runtime packages listed in `requirements.txt`: pySerial and esptool.
+- Optional Textual prototype dependency in `requirements-textual.txt`; it is
+  not required for the Tkinter application.
 - PyInstaller 6.22.3 for the verified executable build; it is a separate build
   dependency and is not listed in `requirements.txt`.
 
@@ -61,6 +63,20 @@ verified build tool separately into `.venv`:
 ```powershell
 .\.venv\Scripts\python.exe run_wep.py
 ```
+
+The experimental Textual interface uses a separate dependency set and entry
+point. Install and run it with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-textual.txt
+.\.venv\Scripts\python.exe run_wep_textual.py
+```
+
+The default `run_wep.py` entry point continues to launch Tkinter. The Textual
+prototype is not included in the Windows EXE build.
+In the Textual export panel, enter a JSON or INI file path and an existing CSV
+directory; an omitted `.json` or `.ini` suffix is appended. Replacing existing
+outputs requires confirmation.
 
 ## Build the Windows EXE
 
@@ -111,21 +127,28 @@ board before building firmware.
 
 Tests use mocks for serial ports and diagnostic processes. They do not prove
 that a physical ESP32 can connect or enter its bootloader automatically. No
-linter or formatter is currently configured in the repository.
+linter or formatter is currently configured in the repository. Textual
+interface tests run when the optional Textual dependencies are installed and
+are skipped otherwise.
 
 ## Project structure
 
 ```text
 run_wep.py
+run_wep_textual.py
 WEP_Copilot.spec
 requirements.txt
+requirements-textual.txt
 src/wep/
   __init__.py
   __main__.py
   gui.py
+  textual_app.py
+  textual_app.tcss
   esptool_diagnostics.py
   serial_ports.py
   profile.py
+  profile_factory.py
   storage.py
   csv_export.py
   platformio_ini.py

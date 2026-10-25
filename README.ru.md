@@ -34,6 +34,8 @@ WEP (Wepwawet ESP32 Profiler) — настольное приложение Wind
   выполнялась на Python 3.14.2.
 - Tkinter/Tcl-Tk из стандартного установщика Python для Windows.
 - Зависимости приложения из `requirements.txt`: pySerial и esptool.
+- Необязательная зависимость экспериментального интерфейса Textual указана в
+  `requirements-textual.txt`; для Tkinter она не требуется.
 - PyInstaller 6.22.3 для проверенной сборки EXE; это отдельный инструмент
   сборки, не указанный в `requirements.txt`.
 
@@ -62,6 +64,20 @@ py -3.14 -m venv .venv
 ```powershell
 .\.venv\Scripts\python.exe run_wep.py
 ```
+
+Для отдельного экспериментального интерфейса Textual установите его набор
+зависимостей и запустите отдельную точку входа:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-textual.txt
+.\.venv\Scripts\python.exe run_wep_textual.py
+```
+
+Обычный запуск `run_wep.py` по-прежнему открывает Tkinter. Textual-прототип не
+включён в сборку Windows EXE.
+В панели экспорта Textual укажите путь к JSON- или INI-файлу и существующую
+папку для CSV; если расширение `.json` или `.ini` не указано, оно добавится.
+Перезапись существующих файлов требует подтверждения.
 
 ## Сборка Windows EXE
 
@@ -114,21 +130,28 @@ if (Test-Path $workPath) {
 
 Тесты используют моки последовательных портов и диагностических процессов.
 Они не подтверждают подключение физической ESP32 или автоматический вход в её
-загрузчик. В репозитории пока не настроен линтер или форматтер.
+загрузчик. В репозитории пока не настроен линтер или форматтер. Тесты
+интерфейса Textual запускаются при установке его необязательных зависимостей;
+без них эти тесты пропускаются.
 
 ## Структура проекта
 
 ```text
 run_wep.py
+run_wep_textual.py
 WEP_Copilot.spec
 requirements.txt
+requirements-textual.txt
 src/wep/
   __init__.py
   __main__.py
   gui.py
+  textual_app.py
+  textual_app.tcss
   esptool_diagnostics.py
   serial_ports.py
   profile.py
+  profile_factory.py
   storage.py
   csv_export.py
   platformio_ini.py
